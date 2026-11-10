@@ -1,0 +1,20 @@
+# Veri Git'e girmez (scriptlerle yeniden üretilir)
+data/
+!data/.gitkeep
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# Spark
+spark-warehouse/
+metastore_db/
+derby.log
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
