@@ -115,12 +115,13 @@ NYC Taxi/
 - **Çıktı:** `data/raw/*.parquet`, `data/raw/taxi_zone_lookup.csv`
 
 #### T1.2 Veri sözlüğü (`docs/data_dictionary.md`)
-- [ ] 20 kolonun her biri için (`cbd_congestion_fee` dahil): **ad, veri tipi (gerçek şemadan), açıklama, birim, geçerli aralık / izinli değerler, örnek değer, eksik oranı**
-- [ ] Kod tabloları: `VendorID`, `RatecodeID`, `payment_type`, `store_and_fwd_flag`
-- [ ] Zone lookup tablosunun açıklaması ve `PULocationID/DOLocationID` ile ilişkisi
-- [ ] Flex Fare açıklaması: `payment_type = 0` ↔ 5 kolonun birlikte null olması
-- [ ] Türetilecek kolonlar (S2/S3/S4 için): `trip_duration_min`, `avg_speed_mph`, `pickup_hour`, `pickup_dow`, `is_flex_fare`
+- [x] 20 kolonun her biri için (`cbd_congestion_fee` dahil): **ad, veri tipi (gerçek şemadan), açıklama, birim, geçerli aralık / izinli değerler, örnek değer, eksik oranı**
+- [x] Kod tabloları: `VendorID`, `RatecodeID`, `payment_type`, `store_and_fwd_flag`
+- [x] Zone lookup tablosunun açıklaması ve `PULocationID/DOLocationID` ile ilişkisi
+- [x] Flex Fare açıklaması: `payment_type = 0` ↔ 5 kolonun birlikte null olması (19M kayıtta %100 örtüşme)
+- [x] Türetilecek kolonlar (S2/S3/S4 için): `trip_duration_min`, `avg_speed_mph`, `pickup_hour`, `pickup_dow`, `is_flex_fare`
 - **Kaynak:** TLC Data Dictionary PDF + gerçek veriden okunan şema/istatistikler
+- Çalıştırma: `python -m src.dictionary_stats` → `reports/results/{dictionary_stats,code_value_counts,flex_fare_check}.csv`
 
 #### T1.3 Boyut setleri ve format dönüşümü (`src/build_sizes.py`)
 - [ ] 5 ay birleştirilir → **tam set (~19M)**

@@ -1,0 +1,21 @@
+column,spark_type,null_count,null_pct,min,max,approx_distinct,example,total_rows
+VendorID,int,0,0.0,1,7,4,2,18999282
+tpep_pickup_datetime,timestamp_ntz,0,0.0,2001-01-01 09:23:58,2026-06-01 00:20:35,9415214,2026-01-01 00:54:04,18999282
+tpep_dropoff_datetime,timestamp_ntz,0,0.0,2001-01-01 16:09:38,2026-06-02 12:53:42,8945264,2026-01-01 00:59:37,18999282
+passenger_count,bigint,4812280,25.329,0,9,10,1,18999282
+trip_distance,double,0,0.0,0.0,328522.2,6469,0.97,18999282
+RatecodeID,bigint,4812280,25.329,1,99,7,1,18999282
+store_and_fwd_flag,string,4812280,25.329,N,Y,2,N,18999282
+PULocationID,int,0,0.0,1,265,264,239,18999282
+DOLocationID,int,0,0.0,1,265,262,238,18999282
+payment_type,bigint,0,0.0,0,4,5,1,18999282
+fare_amount,double,0,0.0,-2555.2,5525.99,15710,7.2,18999282
+extra,double,0,0.0,-7.5,20.71,105,1.0,18999282
+mta_tax,double,0,0.0,-0.5,10.5,14,0.5,18999282
+tip_amount,double,0,0.0,-222.0,766.0,6154,3.66,18999282
+tolls_amount,double,0,0.0,-111.79,1400.0,2940,0.0,18999282
+improvement_surcharge,double,0,0.0,-1.0,2.5,5,1.0,18999282
+total_amount,double,0,0.0,-2560.2,5530.74,28496,15.86,18999282
+congestion_surcharge,double,4812280,25.329,-2.5,2.5,4,2.5,18999282
+Airport_fee,double,4812280,25.329,-2.0,27.0,14,0.0,18999282
+cbd_congestion_fee,double,0,0.0,-0.75,0.75,3,0.0,18999282
