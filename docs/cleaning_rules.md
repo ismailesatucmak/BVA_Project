@@ -78,6 +78,10 @@ Profil sırasında iki büyük grubun incelenmesi, bunların **büyük olasılı
 | `RatecodeID = 99` (R7) | 637.889 | %99,9'u Vendor 1'den → kodu bu sağlayıcı göndermiyor. Medyan 7,8 mil, 45 dk, 32,5 $, %98'i farklı bölgeye, neredeyse tamamı kredi kartı → normal görünüyor. Silinmeleri **uzun yolculukların ve Vendor 1'in payını azaltır.** |
 | Flex Fare + sıfır mesafe (R2'nin parçası) | 407.165 | Medyan 17 dk, 25,21 $, %95'i farklı bölgeye → yolculuk yapılmış, ama ön fiyatlı olduğu için taksimetre mesafe yazmamış. Silinmeleri **Flex Fare payını azaltır** (%25,3 → temiz veride daha düşük). |
 
+| **Vendor 7 (Helix) — tamamı** (R4) | 234.756 | Bu sağlayıcının **her kaydında** iniş zamanı = biniş zamanı (süre 0), ama mesafe (medyan 1,5 mil) ve ücret (medyan 12 $) normal → sağlayıcı iniş zamanını göndermiyor. Temiz veride **Helix hiç yok** (ham verinin %1,2'si). Hata kayıtta değil, **veri kaynağında**. |
+
+T2.3'teki kural × sağlayıcı kırılımı (`anomaly_rule_rates.csv`) bu tür kaynak kaynaklı örüntüleri gösterir: R7'nin %99,9'u Vendor 1'den (Bronx'ta kayıtların %54'ü, Brooklyn'de %30'u), R3'ün en yüksek oranı Vendor 6'da (%13,9).
+
 Buna karşılık **normal (Flex olmayan) sıfır mesafeli** 169.579 kayıt gerçekten hatalı/iptal: medyan süre **11 saniye**, %75'i aynı bölgede başlayıp bitiyor. **Negatif ücretli** 118.331 kaydın hepsi Vendor 2'den ve %89'unun aynı zaman, bölge ve tutarda pozitif bir "eşi" var → orijinal yolculuğun iade/ters kaydı.
 
 Diğer notlar:

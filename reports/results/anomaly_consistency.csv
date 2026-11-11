@@ -1,0 +1,3 @@
+check,rows,flex_fare_rows,also_context_flagged
+kısa mesafe (<1 mil) + yüksek ücret (>100 $),492,293,297
+yer tutucu ücret (0 < ücret < 3 $ açılış ücreti),2600,2052,291

@@ -54,19 +54,19 @@ def _duplicate_flag(raw_columns: list[str]):
     return F.row_number().over(window) > 1
 
 
+def rule_condition(rule: str) -> F.Column:
+    """R9 dışındaki bir kuralın bool ifadesi (girdi: add_derived() çıktısı)."""
+    checks = quality.logic_checks()
+    return _any([checks[name] for name in RULES[rule][1]])
+
+
 def flag_rules(derived: DataFrame) -> DataFrame:
     """add_derived() çıktısına her kural için bir bool kolon (R1…R10) ekler."""
     raw_columns = [c for c in derived.columns if c not in quality.DERIVED_COLUMNS]
-    checks = quality.logic_checks()
-    flags = {}
-    for rule, (_, check_names) in RULES.items():
-        if rule == "R9":
-            flags[rule] = _duplicate_flag(raw_columns)
-            continue
-        condition = F.lit(False)
-        for name in check_names:
-            condition = condition | checks[name]
-        flags[rule] = condition
+    flags = {
+        rule: _duplicate_flag(raw_columns) if rule == "R9" else rule_condition(rule)
+        for rule in RULE_IDS
+    }
     return derived.withColumns(flags)
 
 

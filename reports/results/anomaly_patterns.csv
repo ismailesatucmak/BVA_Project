@@ -1,0 +1,70 @@
+source,dimension,value,rows,anomalies,rate_pct
+raw: herhangi bir kural,pickup_hour,7,587280,65609,11.172
+raw: herhangi bir kural,pickup_hour,15,1107819,93838,8.471
+raw: herhangi bir kural,pickup_hour,11,872820,85853,9.836
+raw: herhangi bir kural,pickup_hour,3,183889,10796,5.871
+raw: herhangi bir kural,pickup_hour,8,771567,80417,10.423
+raw: herhangi bir kural,pickup_hour,22,1041382,43197,4.148
+raw: herhangi bir kural,pickup_hour,16,1135183,159526,14.053
+raw: herhangi bir kural,pickup_hour,0,569085,25681,4.513
+raw: herhangi bir kural,pickup_hour,5,170085,26460,15.557
+raw: herhangi bir kural,pickup_hour,18,1346973,196338,14.576
+raw: herhangi bir kural,pickup_hour,17,1282978,188607,14.701
+raw: herhangi bir kural,pickup_hour,6,327394,48093,14.69
+raw: herhangi bir kural,pickup_hour,19,1185768,138815,11.707
+raw: herhangi bir kural,pickup_hour,23,805218,35751,4.44
+raw: herhangi bir kural,pickup_hour,9,804202,86806,10.794
+raw: herhangi bir kural,pickup_hour,1,379105,17265,4.554
+raw: herhangi bir kural,pickup_hour,20,1094240,50983,4.659
+raw: herhangi bir kural,pickup_hour,10,813409,84574,10.397
+raw: herhangi bir kural,pickup_hour,4,151278,14401,9.52
+raw: herhangi bir kural,pickup_hour,12,944144,91017,9.64
+raw: herhangi bir kural,pickup_hour,13,978760,90883,9.286
+raw: herhangi bir kural,pickup_hour,14,1060147,92184,8.695
+raw: herhangi bir kural,pickup_hour,21,1135258,48814,4.3
+raw: herhangi bir kural,pickup_hour,2,251298,12413,4.94
+raw: herhangi bir kural,VendorID,7,234756,234756,100.0
+raw: herhangi bir kural,VendorID,1,3679227,783239,21.288
+raw: herhangi bir kural,VendorID,2,15048722,765102,5.084
+raw: herhangi bir kural,VendorID,6,36577,5224,14.282
+raw: herhangi bir kural,pu_borough,Queens,1686998,257501,15.264
+raw: herhangi bir kural,pu_borough,EWR,2393,2316,96.782
+raw: herhangi bir kural,pu_borough,Unknown,21955,21955,100.0
+raw: herhangi bir kural,pu_borough,Brooklyn,764355,273900,35.834
+raw: herhangi bir kural,pu_borough,Staten Island,2031,455,22.403
+raw: herhangi bir kural,pu_borough,N/A,7764,7764,100.0
+raw: herhangi bir kural,pu_borough,Manhattan,16330620,1118596,6.85
+raw: herhangi bir kural,pu_borough,Bronx,183166,105834,57.78
+clean: bağlamsal anomali,pickup_hour,7,521671,15105,2.896
+clean: bağlamsal anomali,pickup_hour,15,1013981,21194,2.09
+clean: bağlamsal anomali,pickup_hour,11,786967,12812,1.628
+clean: bağlamsal anomali,pickup_hour,3,173093,3062,1.769
+clean: bağlamsal anomali,pickup_hour,8,691150,22311,3.228
+clean: bağlamsal anomali,pickup_hour,22,998185,25257,2.53
+clean: bağlamsal anomali,pickup_hour,16,975657,16162,1.657
+clean: bağlamsal anomali,pickup_hour,0,543404,14816,2.727
+clean: bağlamsal anomali,pickup_hour,5,143625,2334,1.625
+clean: bağlamsal anomali,pickup_hour,18,1150635,17454,1.517
+clean: bağlamsal anomali,pickup_hour,17,1094371,18829,1.721
+clean: bağlamsal anomali,pickup_hour,6,279301,3626,1.298
+clean: bağlamsal anomali,pickup_hour,19,1046953,11279,1.077
+clean: bağlamsal anomali,pickup_hour,23,769467,17435,2.266
+clean: bağlamsal anomali,pickup_hour,9,717396,10534,1.468
+clean: bağlamsal anomali,pickup_hour,1,361840,9693,2.679
+clean: bağlamsal anomali,pickup_hour,20,1043257,17579,1.685
+clean: bağlamsal anomali,pickup_hour,10,728835,8962,1.23
+clean: bağlamsal anomali,pickup_hour,4,136877,4179,3.053
+clean: bağlamsal anomali,pickup_hour,12,853127,15113,1.771
+clean: bağlamsal anomali,pickup_hour,13,887877,14198,1.599
+clean: bağlamsal anomali,pickup_hour,14,967963,17300,1.787
+clean: bağlamsal anomali,pickup_hour,21,1086444,31859,2.932
+clean: bağlamsal anomali,pickup_hour,2,238885,3698,1.548
+clean: bağlamsal anomali,VendorID,6,31353,4473,14.267
+clean: bağlamsal anomali,VendorID,1,2895988,24555,0.848
+clean: bağlamsal anomali,VendorID,2,14283620,305763,2.141
+clean: bağlamsal anomali,pu_borough,Queens,1429497,18322,1.282
+clean: bağlamsal anomali,pu_borough,Brooklyn,490455,8491,1.731
+clean: bağlamsal anomali,pu_borough,Staten Island,1576,6,0.381
+clean: bağlamsal anomali,pu_borough,Manhattan,15212024,307129,2.019
+clean: bağlamsal anomali,pu_borough,Bronx,77332,841,1.088
+clean: bağlamsal anomali,pu_borough,EWR,77,2,2.597

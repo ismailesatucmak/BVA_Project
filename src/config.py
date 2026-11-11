@@ -63,6 +63,19 @@ MAX_DURATION_MIN = 180.0
 MAX_SPEED_MPH = 80.0
 PROFILE_PERCENTILES = (0.001, 0.01, 0.25, 0.5, 0.75, 0.99, 0.999)
 
+# ---- Anomali analizi (T2.3)
+IQR_K = 1.5  # global IQR: [Q1 − k·IQR, Q3 + k·IQR] dışı (Tukey)
+EXTREME_PERCENTILE = 0.999  # global üst eşik
+CONTEXT_IQR_K = 3.0  # güzergâh içi IQR: daha sıkı → yalnızca belirgin sapmalar
+MIN_ROUTE_TRIPS = 30  # bağlam için bir güzergâhta gereken en az yolculuk
+# Sabit tarifeli güzergâhlarda (örn. JFK↔Manhattan) IQR≈0 olur ve küçük sapmalar bile
+# anomali sayılır → IQR en az medyanın bu oranı kadar kabul edilir.
+CONTEXT_MIN_IQR_FRACTION = 0.2
+METERED_MIN_FARE = 3.0  # NYC taksimetre açılış ücreti; altı "yer tutucu" ücret
+SHORT_TRIP_MILES = 1.0
+SHORT_TRIP_HIGH_FARE = 100.0  # kısa mesafe + bu ücretin üstü = ücret–mesafe tutarsızlığı
+ZONE_LOOKUP_PATH = RAW_DIR / ZONE_LOOKUP_FILE
+
 
 def trip_file_name(year: int, month: int) -> str:
     return f"yellow_tripdata_{year}-{month:02d}.parquet"

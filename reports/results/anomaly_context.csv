@@ -1,0 +1,3 @@
+metric,context_flagged,context_high,context_low,global_p999_flagged,both,context_only,global_only
+fare_amount,272480,267308,5172,17672,4839,267641,12833
+trip_duration_min,106984,106958,26,17403,3295,103689,14108

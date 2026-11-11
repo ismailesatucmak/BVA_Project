@@ -224,11 +224,18 @@ Eşikler `config.py`'de sabit olarak tutulur. Her kural için **kaç kaydı etki
 - **Sonuç:** 18.999.282 → **17.210.961** (%90,6). R10 sıralı etkisi 0 (tamamını R3 kapsıyor). Çalıştırma: `python -m src.clean`
 
 #### T2.3 Anomali analizi (mesafe, ücret, süre)
-- [ ] **Kural bazlı** (T2.2) vs **istatistiksel** (IQR ve p99.9 eşiği) yöntemlerin karşılaştırılması — hangisi kaç kayıt işaretliyor, ne kadar örtüşüyor
-- [ ] Ücret–mesafe tutarlılığı: mesafeye göre beklenmeyen ücretler (örn. kısa mesafe + çok yüksek ücret)
-- [ ] Anomalilerin örüntüsü: hangi saat/vendor/bölgede yoğunlaşıyor? (kaynağı hakkında yorum) — zone lookup ile **join** (ilçe/bölge adı)
-- [ ] Bağlama duyarlı anomali: **window** ile güzergâh/saat grubu içinde ücret ve süre yüzdelikleri (örn. aynı PU→DO bölge çiftinde p99 üstü) → global eşiğin kaçırdığı anomaliler
-- **İleri analitik işlem şartı** (aggregation / join / window) S2 tarafında bu iki maddeyle karşılanır.
+- [x] **Kural bazlı** vs **istatistiksel** (IQR k=1,5 ve p99.9) — ham veride, mesafe/ücret/süre için örtüşme (`anomaly_rule_vs_stat.csv`)
+- [x] Ücret–mesafe tutarlılığı: kısa mesafe + > 100 $ (492 kayıt), açılış ücretinin (3 $) altında "yer tutucu" ücret (2.600; %79'u Flex Fare) (`anomaly_consistency.csv`)
+- [x] Anomalilerin örüntüsü: saat / sağlayıcı / biniş ilçesi — zone lookup ile **join**; kural × sağlayıcı/ilçe oranları (`anomaly_patterns.csv`, `anomaly_rule_rates.csv`)
+- [x] Bağlama duyarlı anomali: **window** (`partitionBy(PU, DO)`) ile güzergâh içi çeyrekler; IQR k=3, IQR alt sınırı medyanın %20'si (sabit tarifeli güzergâhlar için), en az 30 yolculuk (`anomaly_context.csv`, `anomaly_examples.csv`)
+- **İleri analitik işlem şartı** karşılandı: window (R9 + güzergâh bağlamı), join (zone lookup), aggregation (örüntüler).
+- Çalıştırma: `python -m src.anomaly` (grafik örneklemleri → `data/samples/`)
+
+**Ana bulgular:**
+1. **IQR ağır kuyruklu taksi verisine uymuyor:** ücret için IQR üst sınırı 52 $ → 1,25M kayıt (%6,6) "anomali" sayılır; bunların çoğu meşru havalimanı yolculukları (JFK sabit tarifesi ~70 $). Kurallarla örtüşmesi düşük.
+2. **Kural ve global eşik farklı şeyler yakalar:** R3 (ücret ≤ 0) ile p99.9 üstü (> 143 $) hiç örtüşmüyor; kural *imkânsız* değerleri, istatistik *nadir* değerleri bulur.
+3. **Bağlam, globalin kaçırdığını bulur:** temiz veride güzergâh içi ücret anomalisi 272.480, global p99.9 yalnızca 17.672; örtüşme 4.839. Örn. aynı bölge içinde 0,15 mil için 650 $ (güzergâh medyanı 8 $) — global eşik bunu yakalamaz çünkü 650 $ tek başına nadir değil.
+4. **Anomalinin kaynağı sağlayıcı:** Vendor 7 (Helix) iniş zamanını hiç göndermiyor → tamamı R4 ile silindi; Vendor 1 RatecodeID göndermiyor (R7'nin %99,9'u); Vendor 6 (Myle) temiz veride bile %14 bağlamsal anomali (diğerleri %1–2).
 
 #### T2.4 Temiz veri teslimi (diğer öğrencilere arayüz)
 - [x] `data/clean/` → Parquet, `pickup_year/pickup_month` ile partition'lı, ay başına 1 dosya, zamana göre sıralı (479 MB)

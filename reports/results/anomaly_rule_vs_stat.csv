@@ -1,0 +1,7 @@
+metric,rule,stat_method,stat_threshold,rule_flagged,stat_flagged,both,rule_only,stat_only
+trip_distance,R2,IQR (k=1.5),"[-3.10, 7.86]",577511,2150631,767,576744,2149864
+trip_distance,R2,p99.9 üstü,> 29.91,577511,19354,767,576744,18587
+fare_amount,R3,IQR (k=1.5),"[-15.20, 52.00]",129194,1251013,49312,79882,1201701
+fare_amount,R3,p99.9 üstü,> 143.00,129194,19665,0,129194,19665
+trip_duration_min,R4,IQR (k=1.5),"[-12.43, 42.77]",436497,1086898,7147,429350,1079751
+trip_duration_min,R4,p99.9 üstü,> 125.30,436497,19200,7145,429352,12055
