@@ -190,7 +190,7 @@ Her **boyut × format** için ölçülenler:
 
 ---
 
-### Faz 2 — ÖĞRENCİ 2: Temizlik ve Anomali Analizi (PySpark)
+### Faz 2 — ÖĞRENCİ 2: Temizlik ve Anomali Analizi (PySpark) ✅
 
 #### T2.1 Profilleme (`src/profile_data.py`)
 - [x] Kolon başına: null sayısı/oranı, min, max, mean, std, p0.1/p1/p25/p50/p75/p99/p99.9 (14 sayısal + türetilmiş kolon)
@@ -245,10 +245,13 @@ Eşikler `config.py`'de sabit olarak tutulur. Her kural için **kaç kaydı etki
 - **Bitti kriteri:** Öğrenci 3/4/5 tek satırla okuyabiliyor: `spark.read.parquet("data/clean")`
 
 #### T2.5 Görselleştirme ve yorum (`notebooks/02_...ipynb`)
-- [ ] Mesafe / ücret / süre: temizlik öncesi vs sonrası histogram veya boxplot (log ölçek)
-- [ ] Kural başına silinen kayıt bar grafiği
-- [ ] Mesafe–ücret scatter (örneklenmiş), anomaliler renkli
-- [ ] **"Neden" yorumu:** hatalı kayıtların olası kaynakları (GPS/taksimetre hatası, iadeler, manuel giriş, saat dilimi/sistem hataları) ve temizliğin sonraki analizlere etkisi
+- [x] Grafik 06: kural başına silinen kayıt (tek başına vs sıralı) + naif dropna karşılaştırması
+- [x] Grafik 07: mesafe / ücret / süre temizlik öncesi vs sonrası (log-x yoğunluk, %1 örneklem)
+- [x] Grafik 08: mesafe–ücret scatter (örneklenmiş), güzergâh bağlamına göre anomaliler renkli
+- [x] Grafik 09: sağlayıcı × kural ısı haritası → anomalinin kaynağı
+- [x] Grafik 10: kural vs istatistik örtüşmesi (IQR, p99.9)
+- [x] **"Neden" yorumu:** hatalı kayıtların kaynakları (sağlayıcı yazılımı, iadeler, iptaller, elle giriş, sistem saati, Flex Fare kayıt düzeni) ve temizliğin Öğrenci 3/4/5'e etkisi; sınırlamalar
+- Grafikler `src/plots_clean.py` → `reports/figures/06–10_*.png`; notebook `notebooks/02_cleaning_and_anomalies.ipynb` (çalıştırılmış)
 
 ---
 
@@ -277,10 +280,10 @@ Eşikler `config.py`'de sabit olarak tutulur. Her kural için **kaç kaydı etki
 - [x] En az 3 veri büyüklüğü → 100K / 1M / 5M / 10M (+ full) üretildi (T1.3)
 - [x] Ölçeklenebilir teknoloji → PySpark (sözlük istatistikleri, boyut setleri; temizlik de Spark ile)
 - [x] En az 2 format → CSV vs Parquet (snappy, gzip, zstd) yazıldı (T1.3)
-- [ ] İleri analitik işlem → window ✔ (R9 duplicate, T2.2) + join (zone lookup) ve bağlama duyarlı anomali (T2.3)
+- [x] İleri analitik işlem → window (R9 duplicate + güzergâh bağlamı), join (zone lookup), aggregation (örüntüler)
 - [x] Performans ölçümü → disk boyutu, okuma süresi, tepe bellek (T1.4, 5 boyut × 4 format × 2 motor, 3 tekrar)
-- [ ] Görselleştirme → T1.5 ✔ (5 grafik) + T2.5
-- [ ] "Neden" yorumu → notebook 01 ✔, notebook 02
+- [x] Görselleştirme → T1.5 (5 grafik) + T2.5 (5 grafik)
+- [x] "Neden" yorumu → notebook 01 + notebook 02
 - [ ] Git ✔ + requirements.txt ✔ + README + mimari şema + kısa teknik rapor
 - [ ] Teknik katkı ayrı gösterim → README'de S1 / S2 başlıkları
 - [ ] Sınav soruları (5 seçenekli) → S1/S2 payı
