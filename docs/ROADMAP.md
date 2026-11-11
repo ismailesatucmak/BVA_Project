@@ -3,6 +3,7 @@
 > **Proje:** Milyonlarca taksi yolculuğundan şehir içi ulaşım davranışlarını analiz etmek.
 > **Araştırma sorusu:** Veri büyüdükçe klasik analiz yaklaşımı ne zaman yetersiz kalıyor?
 > **Bu dokümanın kapsamı:** Öğrenci 1 ve Öğrenci 2 görevleri (tek kişi tarafından yürütülüyor) + ortak teslimlere katkı.
+> **Resmi gereksinimler ve puanlama:** [PROJECT_REQUIREMENTS.md](PROJECT_REQUIREMENTS.md) — her adım buna göre kontrol edilir.
 
 ---
 
@@ -188,13 +189,16 @@ Eşikler `config.py`'de sabit olarak tutulur. Her kural için **kaç kaydı etki
 
 - [ ] Eksik değer stratejisi: silme mi doldurma mı → kolon bazında karar ve gerekçe (Flex Fare null'ları silinmez)
 - [ ] Kural etkisi tablosu: her kural için **tek başına** etkilediği kayıt + **sırayla uygulandığında** sildiği kayıt (kurallar örtüşür)
-- [ ] "Naif temizlik" karşılaştırması: null içeren her satırı silmek verinin ~%29'unu yok ederdi → rapora bulgu olarak
+- [ ] "Naif temizlik" karşılaştırması: null içeren her satırı silmek verinin %25,3'ünü (4,8M kayıt) yok ederdi → rapora bulgu olarak
+- [ ] R9 duplicate tespiti **window** fonksiyonuyla (`row_number() over (partition by tüm kolonlar)`) → hangi kopyanın tutulduğu açık
 - [ ] Temizlik öncesi/sonrası özet istatistik karşılaştırması (ortalama ücret, süre, mesafe ne kadar değişti?)
 
 #### T2.3 Anomali analizi (mesafe, ücret, süre)
 - [ ] **Kural bazlı** (T2.2) vs **istatistiksel** (IQR ve p99.9 eşiği) yöntemlerin karşılaştırılması — hangisi kaç kayıt işaretliyor, ne kadar örtüşüyor
 - [ ] Ücret–mesafe tutarlılığı: mesafeye göre beklenmeyen ücretler (örn. kısa mesafe + çok yüksek ücret)
-- [ ] Anomalilerin örüntüsü: hangi saat/vendor/bölgede yoğunlaşıyor? (kaynağı hakkında yorum)
+- [ ] Anomalilerin örüntüsü: hangi saat/vendor/bölgede yoğunlaşıyor? (kaynağı hakkında yorum) — zone lookup ile **join** (ilçe/bölge adı)
+- [ ] Bağlama duyarlı anomali: **window** ile güzergâh/saat grubu içinde ücret ve süre yüzdelikleri (örn. aynı PU→DO bölge çiftinde p99 üstü) → global eşiğin kaçırdığı anomaliler
+- **İleri analitik işlem şartı** (aggregation / join / window) S2 tarafında bu iki maddeyle karşılanır.
 
 #### T2.4 Temiz veri teslimi (diğer öğrencilere arayüz)
 - [ ] `data/clean/` → Parquet, `pickup_year/pickup_month` ile partition'lı
@@ -213,7 +217,8 @@ Eşikler `config.py`'de sabit olarak tutulur. Her kural için **kaç kaydı etki
 ### Faz 3 — Ortak Teslimlere Katkı
 - [ ] **Mimari şema** (`docs/architecture.png`): TLC → raw Parquet → Spark (dönüşüm + temizlik) → clean Parquet → S3 aggregation / S4 ML / S5 benchmark + dashboard
 - [ ] **README** bölümleri: veri kaynağı, kurulum, çalıştırma sırası, **Öğrenci 1 ve 2 teknik katkısı** (ayrı başlık)
-- [ ] **Sınav soruları:** 10 sorunun en az 2'si (5 seçenekli) — biri Parquet/format, biri veri temizliği üzerine
+- [ ] **Kısa teknik rapor — S1/S2 bölümü:** yöntem, ölçüm tabloları, grafikler, "neden" yorumu (notebook'lardan derlenir)
+- [ ] **Sınav soruları:** projenin 10 sorusundan S1/S2 payı (5 seçenekli) — en az biri Parquet/format, biri veri temizliği üzerine
 - [ ] **Araştırma sorusuna katkı paragrafı:** "Hangi boyutta, hangi formatta klasik yaklaşım (pandas + CSV) yetersiz kalmaya başladı ve neden?"
 
 ---
@@ -230,14 +235,17 @@ Eşikler `config.py`'de sabit olarak tutulur. Her kural için **kaç kaydı etki
 | Sunum ve sorulara hâkimiyet (3) | Her sonucun "neden" yorumu, sınav soruları |
 
 ## 6. Proje Şartları Kontrol Listesi (S1/S2 kapsamında)
-- [x] Gerçek / açık kaynak veri → TLC (2026 Ocak–Mayıs, 19M kayıt)
-- [ ] En az 3 veri büyüklüğü → 100K / 1M / 5M / 10M (+ full)
-- [ ] Ölçeklenebilir teknoloji → PySpark
-- [ ] En az 2 format → CSV vs Parquet (snappy, gzip, zstd)
-- [ ] Performans ölçümü → disk, okuma süresi, bellek
+- [x] Gerçek / açık kaynak veri → TLC (2026 Ocak–Mayıs, 19M kayıt; sentetik ölçekleme gerekmedi)
+- [x] En az 3 veri büyüklüğü → 100K / 1M / 5M / 10M (+ full) üretildi (T1.3)
+- [x] Ölçeklenebilir teknoloji → PySpark (sözlük istatistikleri, boyut setleri; temizlik de Spark ile)
+- [x] En az 2 format → CSV vs Parquet (snappy, gzip, zstd) yazıldı (T1.3)
+- [ ] İleri analitik işlem → join (zone lookup) + window (duplicate, bağlama duyarlı anomali) — T2.2/T2.3
+- [ ] Performans ölçümü → disk boyutu ✔ (manifest); okuma süresi + bellek T1.4
 - [ ] Görselleştirme → T1.5 + T2.5
 - [ ] "Neden" yorumu → her notebook'ta
-- [ ] Git + README + requirements.txt + mimari şema
+- [ ] Git ✔ + requirements.txt ✔ + README + mimari şema + kısa teknik rapor
+- [ ] Teknik katkı ayrı gösterim → README'de S1 / S2 başlıkları
+- [ ] Sınav soruları (5 seçenekli) → S1/S2 payı
 
 ## 7. Riskler
 | Risk | Önlem |
