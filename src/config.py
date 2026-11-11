@@ -1,11 +1,17 @@
 """Proje genelinde kullanılan sabitler: yollar, veri kapsamı, kaynak URL'ler."""
+import os
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = PROJECT_ROOT / "data"
 RAW_DIR = DATA_DIR / "raw"
-PROCESSED_DIR = DATA_DIR / "processed"
 CLEAN_DIR = DATA_DIR / "clean"
+
+# Büyük çıktılar (boyut setleri, Spark geçici dosyaları) ayrı diskte tutulur.
+# Başka bir makinede NYC_DATA_ROOT ortam değişkeniyle değiştirilir.
+EXTERNAL_DATA_ROOT = Path(os.environ.get("NYC_DATA_ROOT", r"D:\BVAVeri"))
+PROCESSED_DIR = EXTERNAL_DATA_ROOT / "processed"
+SPARK_LOCAL_DIR = EXTERNAL_DATA_ROOT / "spark_tmp"
 RESULTS_DIR = PROJECT_ROOT / "reports" / "results"
 FIGURES_DIR = PROJECT_ROOT / "reports" / "figures"
 

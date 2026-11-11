@@ -37,10 +37,16 @@ def get_spark(app_name: str = "nyc-taxi", driver_memory: str = DEFAULT_DRIVER_ME
     _configure_environment()
     from pyspark.sql import SparkSession
 
+    from src.config import SPARK_LOCAL_DIR
+
+    # Shuffle/spill dosyaları C: yerine geniş diske (yalnızca oturum açılırken okunur)
+    SPARK_LOCAL_DIR.mkdir(parents=True, exist_ok=True)
+
     return (
         SparkSession.builder.appName(app_name)
         .master("local[*]")
         .config("spark.driver.memory", driver_memory)
+        .config("spark.local.dir", str(SPARK_LOCAL_DIR))
         .config("spark.driver.host", "localhost")
         .config("spark.driver.bindAddress", "127.0.0.1")
         .config("spark.sql.session.timeZone", "America/New_York")

@@ -66,7 +66,7 @@
 NYC Taxi/
 ├── data/                  # .gitignore'da (veri Git'e girmez)
 │   ├── raw/               # TLC'den indirilen orijinal parquet + zone lookup
-│   ├── processed/         # boyut setleri: size_100k/ size_1m/ size_5m/ size_10m/ size_full/ (csv + 3 parquet)
+│   ├── processed/         # KULLANILMIYOR → boyut setleri D:\BVAVeri\processed\ (C: dolu; NYC_DATA_ROOT)
 │   └── clean/             # Öğrenci 2 çıktısı → Öğrenci 3/4/5 girdisi
 ├── scripts/
 │   └── smoke_test_spark.py  # kurulum testi
@@ -124,14 +124,26 @@ NYC Taxi/
 - Çalıştırma: `python -m src.dictionary_stats` → `reports/results/{dictionary_stats,code_value_counts,flex_fare_check}.csv`
 
 #### T1.3 Boyut setleri ve format dönüşümü (`src/build_sizes.py`)
-- [ ] 5 ay birleştirilir → **tam set (~19M)**
-- [ ] Sabit `seed` ile rastgele örnekleme: **100K, 1M, 5M, 10M** (+ full)
-- [ ] Her boyut için yazılacak formatlar:
+- [x] 5 ay birleştirilir → **tam set (18.999.282)**
+- [x] Örnekleme: **100K, 1M, 5M, 10M** (+ full) — `rand(seed)` yerine **satır hash'i** (xxhash64): makineden bağımsız ve **iç içe** setler (100K ⊂ 1M ⊂ … ⊂ full); satır sayıları ±%0,2
+- [x] Her boyut × format **tek dosya** (`coalesce(1)`): pandas tek çağrıyla okur; tüm codec'ler aynı satır sırasını görür; Parquet row group hedefi 128 MB
+- [x] Her boyut için yazılan formatlar:
   - CSV (sıkıştırmasız)
   - Parquet (snappy — Spark varsayılanı)
   - Parquet (gzip) — yüksek sıkıştırma
   - Parquet (zstd) — TLC'nin kullandığı codec
-- **Çıktı:** `data/processed/size_{100k,1m,5m,10m,full}/{csv,parquet_snappy,parquet_gzip,parquet_zstd}/`
+- **Çıktı:** `D:\BVAVeri\processed\size_{100k,1m,5m,10m,full}\{csv,parquet_snappy,parquet_gzip,parquet_zstd}\yellow.{csv,parquet}` (toplam 5,2 GB) + `reports/results/size_sets_manifest.csv`
+- Çalıştırma: `python -m src.build_sizes [--sizes ...] [--force]` (var olanı atlar). Kök klasör `NYC_DATA_ROOT` ile değiştirilir.
+
+| Boyut | Satır | CSV | snappy | gzip | zstd | CSV / zstd |
+|---|---|---|---|---|---|---|
+| 100k | 99.839 | 10,0 MB | 2,3 MB | 1,7 MB | 1,7 MB | 5,9× |
+| 1m | 1.000.051 | 100 MB | 21,9 MB | 16,4 MB | 16,0 MB | 6,3× |
+| 5m | 4.997.943 | 502 MB | 106 MB | 81,9 MB | 79,9 MB | 6,3× |
+| 10m | 9.996.122 | 1.004 MB | 206 MB | 160 MB | 157 MB | 6,4× |
+| full | 18.999.282 | 1.907 MB | 392 MB | 296 MB | 290 MB | 6,6× |
+
+- Not (T1.4 için): tek dosyada row group sayısı 1–4 → Spark tek Parquet dosyasını en fazla row group sayısı kadar paralel okur; 28 çekirdeğin çoğu boşta kalabilir. Bu bir **bulgu** olarak raporlanır.
 
 #### T1.4 Veri büyüklüğü analizi (`src/benchmark_io.py`)
 Her **boyut × format** için ölçülecekler:
@@ -231,7 +243,7 @@ Eşikler `config.py`'de sabit olarak tutulur. Her kural için **kaç kaydı etki
 | Risk | Önlem |
 |---|---|
 | Spark Windows'ta yazma hatası (winutils) | ✔ Çözüldü (Faz 0) |
-| Disk alanı (~30 GB boş) | Boyut setleri toplam ~8–10 GB (CSV full ≈ 3 GB); gereksiz ara çıktılar silinir |
+| Disk alanı (C: ~27 GB boş) | ✔ Çözüldü: boyut setleri (5,2 GB) ve Spark geçici dosyaları `D:\BVAVeri` (NVMe, 441 GB boş) |
 | 10M/full sette pandas RAM yetersizliği | Bu bir **bulgu**dur — raporlanır (araştırma sorusunun cevabı); benchmark ayrı süreçte çalıştırılır ki çökme tüm ölçümü durdurmasın |
 | Flex Fare null'larının yanlışlıkla silinmesi | R1/R7 null'ları hariç tutar; `is_flex_fare` kolonu |
 | Diğer öğrencilerin S2 çıktısını beklemesi | T2.4 şeması erkenden paylaşılır; ilk ay için ön sürüm erken verilir |
