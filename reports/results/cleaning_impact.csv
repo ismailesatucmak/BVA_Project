@@ -1,0 +1,13 @@
+rule,description,isolated,sequential,unique,sequential_pct,isolated_pct,total_rows
+R1,passenger_count 0 veya > 6,64885.0,64885,60293.0,0.342,0.342,18999282
+R2,trip_distance <= 0 veya > 100 mil,577511.0,574749,435051.0,3.025,3.04,18999282
+R3,fare_amount <= 0 veya total_amount <= 0,129194.0,116605,39603.0,0.614,0.68,18999282
+R4,"süre <= 1 dk, > 180 dk veya negatif",436497.0,291597,285399.0,1.535,2.297,18999282
+R5,ortalama hız > 80 mph,4928.0,2430,1709.0,0.013,0.026,18999282
+R6,pickup 2026-01..05 dışında,15.0,8,8.0,0.0,0.0,18999282
+R7,RatecodeID = 99,637889.0,632999,632500.0,3.332,3.357,18999282
+R8,PU/DO LocationID 264 veya 265,119887.0,105048,105048.0,0.553,0.631,18999282
+R9,tam kopya kayıt (ilki tutulur),0.0,0,0.0,0.0,0.0,18999282
+R10,cbd_congestion_fee < 0,76131.0,0,0.0,0.0,0.401,18999282
+TOTAL,en az bir kurala takılan,,1788321,,9.413,,18999282
+NAIVE,null içeren her satırı sil (karşılaştırma),,4812280,,25.329,,18999282

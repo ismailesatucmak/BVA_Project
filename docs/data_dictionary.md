@@ -145,6 +145,27 @@ Dağılım detayları (yüzdelikler, kural etkileri) T2.1 profilinde hesaplanır
 | `is_flex_fare` | `payment_type = 0` | S2, S3, S4 |
 | `pickup_year`, `pickup_month` | partition kolonları | `data/clean/` |
 
-## 8. Clean Schema
+## 8. Clean Schema (Öğrenci 3/4/5 için arayüz)
 
-> T2.4 tamamlandığında bu bölüme temiz verinin şeması eklenecek.
+**Konum:** `data/clean/` — Parquet (snappy), `pickup_year=…/pickup_month=…` ile partition'lı, ay başına 1 dosya, yolculuk zamanına göre sıralı. **17.210.961 kayıt, 479 MB.**
+**Üretim:** `python -m src.clean` · Kurallar ve etkileri: [`cleaning_rules.md`](cleaning_rules.md).
+
+```python
+from src.spark_session import get_spark
+spark = get_spark()
+df = spark.read.parquet("data/clean")                      # tümü
+jan = df.filter("pickup_month = 1")                        # partition pruning: yalnızca Ocak klasörü okunur
+```
+
+| Kolon | Tip | Not |
+|---|---|---|
+| 20 ham kolon | §2'deki gibi | değerler değiştirilmedi; yalnızca kurala takılan satırlar silindi |
+| `trip_duration_min` | double | (dropoff − pickup) dakika; temiz veride 1 < süre ≤ 180 |
+| `avg_speed_mph` | double | mesafe / süre (saat); temiz veride ≤ 80 |
+| `pickup_hour` | int | 0–23 |
+| `pickup_dow` | int | 1 = Pazar … 7 = Cumartesi (Spark `dayofweek`) |
+| `is_flex_fare` | boolean | `payment_type = 0`; **True ise 5 kolon null** (§4) — analizlerde ayrı ele alın |
+| `pickup_year`, `pickup_month` | int | partition kolonları (klasör adından gelir) |
+
+**Temiz veride garanti edilenler:** ay aralığı 2026-01..05; mesafe 0 < x ≤ 100; ücret ve toplam > 0; yolcu sayısı null veya 1–6; `RatecodeID` ≠ 99; bölge ID'leri 1–263; tam kopya yok.
+**Garanti edilmeyenler:** istatistiksel uç değerler (örn. 1.061 $ ücret) — bunlar silinmedi, T2.3'te analiz edilir.

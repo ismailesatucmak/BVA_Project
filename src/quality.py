@@ -12,6 +12,7 @@ from src import config
 
 SECONDS_PER_MINUTE = 60
 MINUTES_PER_HOUR = 60
+DERIVED_COLUMNS = ("trip_duration_min", "avg_speed_mph", "pickup_hour", "pickup_dow", "is_flex_fare")
 
 
 def _duration_minutes() -> Column:

@@ -193,9 +193,11 @@ Her **boyut × format** için ölçülenler:
 ### Faz 2 — ÖĞRENCİ 2: Temizlik ve Anomali Analizi (PySpark)
 
 #### T2.1 Profilleme (`src/profile_data.py`)
-- [ ] Kolon başına: null sayısı/oranı, min, max, mean, p1/p25/p50/p75/p99/p99.9
-- [ ] Mantıksal tutarsızlık sayıları (negatif ücret, sıfır mesafe, dropoff < pickup, ay dışı tarih…)
-- **Çıktı:** `reports/results/profile_raw.csv`
+- [x] Kolon başına: null sayısı/oranı, min, max, mean, std, p0.1/p1/p25/p50/p75/p99/p99.9 (14 sayısal + türetilmiş kolon)
+- [x] Mantıksal tutarsızlık sayıları — 14 kontrol, Flex Fare / diğer kırılımıyla (`src/quality.py`, profil ve temizlik aynı tanımları kullanır)
+- [x] Şüpheli grupların incelenmesi: R7 (Vendor 1, normal yolculuk profili), Flex Fare + sıfır mesafe (gerçek yolculuk), normal + sıfır mesafe (medyan 11 sn → iptal), negatif ücret (%89'unun pozitif eşi var → iade)
+- **Çıktı:** `reports/results/profile_raw.csv`, `logic_checks_raw.csv` · Çalıştırma: `python -m src.profile_data`
+- **Bulgu:** kayıtların %9,4'ü en az bir kontrole takılıyor; tam kopya yok; eşikler p99.9 değerleriyle doğrulandı (mesafe 29,9 mil, süre 125 dk, hız 46,7 mph)
 
 #### T2.2 Temizlik kuralları (`src/clean.py`, `docs/cleaning_rules.md`)
 Eşikler `config.py`'de sabit olarak tutulur. Her kural için **kaç kaydı etkilediği ayrı sayılır**.
@@ -213,11 +215,13 @@ Eşikler `config.py`'de sabit olarak tutulur. Her kural için **kaç kaydı etki
 | R9 | tam tekrar eden (duplicate) kayıtlar | mükerrer kayıt |
 | R10 | `cbd_congestion_fee` < 0 veya null | yeni kolon tutarlılığı (2025) |
 
-- [ ] Eksik değer stratejisi: silme mi doldurma mı → kolon bazında karar ve gerekçe (Flex Fare null'ları silinmez)
-- [ ] Kural etkisi tablosu: her kural için **tek başına** etkilediği kayıt + **sırayla uygulandığında** sildiği kayıt (kurallar örtüşür)
-- [ ] "Naif temizlik" karşılaştırması: null içeren her satırı silmek verinin %25,3'ünü (4,8M kayıt) yok ederdi → rapora bulgu olarak
-- [ ] R9 duplicate tespiti **window** fonksiyonuyla (`row_number() over (partition by tüm kolonlar)`) → hangi kopyanın tutulduğu açık
-- [ ] Temizlik öncesi/sonrası özet istatistik karşılaştırması (ortalama ücret, süre, mesafe ne kadar değişti?)
+- **Karar (kullanıcı, T2.1 sonrası):** "Alanı null yap, satırı tut" alternatifi yerine **tablodaki gibi silme** seçildi. R7 ve Flex Fare sıfır mesafe kayıtlarının gerçek yolculuk olabileceği `cleaning_rules.md` §5'te sınırlama olarak belgelendi.
+- [x] Eksik değer stratejisi: kolon bazında karar ve gerekçe — doldurma yok, Flex Fare null'ları korunur
+- [x] Kural etkisi tablosu: **tek başına / sıralı / yalnız bu kural** sayıları (`cleaning_impact.csv`)
+- [x] "Naif temizlik" karşılaştırması: `dropna()` 4.812.280 kayıt (%25,3) silerdi; kural bazlı 1.788.321 (%9,4)
+- [x] R9 duplicate tespiti **window** fonksiyonuyla (`row_number() over (partition by 20 ham kolon)`) → 0 kopya
+- [x] Temizlik öncesi/sonrası özet istatistik (`cleaning_before_after.csv`): mesafe ortalaması 5,74 → 3,25 mil, medyan 1,83 → 1,84 (ortalama uç değerlere duyarlı)
+- **Sonuç:** 18.999.282 → **17.210.961** (%90,6). R10 sıralı etkisi 0 (tamamını R3 kapsıyor). Çalıştırma: `python -m src.clean`
 
 #### T2.3 Anomali analizi (mesafe, ücret, süre)
 - [ ] **Kural bazlı** (T2.2) vs **istatistiksel** (IQR ve p99.9 eşiği) yöntemlerin karşılaştırılması — hangisi kaç kayıt işaretliyor, ne kadar örtüşüyor
@@ -227,9 +231,10 @@ Eşikler `config.py`'de sabit olarak tutulur. Her kural için **kaç kaydı etki
 - **İleri analitik işlem şartı** (aggregation / join / window) S2 tarafında bu iki maddeyle karşılanır.
 
 #### T2.4 Temiz veri teslimi (diğer öğrencilere arayüz)
-- [ ] `data/clean/` → Parquet, `pickup_year/pickup_month` ile partition'lı
-- [ ] Türetilmiş kolonlar eklenir: `trip_duration_min`, `avg_speed_mph`, `pickup_hour`, `pickup_dow`, `is_flex_fare`
-- [ ] Şema notu `docs/data_dictionary.md` sonuna eklenir ("Clean schema" bölümü)
+- [x] `data/clean/` → Parquet, `pickup_year/pickup_month` ile partition'lı, ay başına 1 dosya, zamana göre sıralı (479 MB)
+- [x] Türetilmiş kolonlar eklenir: `trip_duration_min`, `avg_speed_mph`, `pickup_hour`, `pickup_dow`, `is_flex_fare`
+- [x] Şema notu `docs/data_dictionary.md` §8 "Clean Schema" — garanti edilen / edilmeyen koşullarla
+- [x] Küçük dosya sorunu düzeltildi: window shuffle'ı ilk yazımda 1.000 dosya (603 MB) üretmişti → 5 dosya (479 MB)
 - **Bitti kriteri:** Öğrenci 3/4/5 tek satırla okuyabiliyor: `spark.read.parquet("data/clean")`
 
 #### T2.5 Görselleştirme ve yorum (`notebooks/02_...ipynb`)
@@ -265,7 +270,7 @@ Eşikler `config.py`'de sabit olarak tutulur. Her kural için **kaç kaydı etki
 - [x] En az 3 veri büyüklüğü → 100K / 1M / 5M / 10M (+ full) üretildi (T1.3)
 - [x] Ölçeklenebilir teknoloji → PySpark (sözlük istatistikleri, boyut setleri; temizlik de Spark ile)
 - [x] En az 2 format → CSV vs Parquet (snappy, gzip, zstd) yazıldı (T1.3)
-- [ ] İleri analitik işlem → join (zone lookup) + window (duplicate, bağlama duyarlı anomali) — T2.2/T2.3
+- [ ] İleri analitik işlem → window ✔ (R9 duplicate, T2.2) + join (zone lookup) ve bağlama duyarlı anomali (T2.3)
 - [x] Performans ölçümü → disk boyutu, okuma süresi, tepe bellek (T1.4, 5 boyut × 4 format × 2 motor, 3 tekrar)
 - [ ] Görselleştirme → T1.5 ✔ (5 grafik) + T2.5
 - [ ] "Neden" yorumu → notebook 01 ✔, notebook 02
