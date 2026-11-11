@@ -106,7 +106,7 @@ NYC Taxi/
 
 ---
 
-### Faz 1 — ÖĞRENCİ 1: Veri Temini, Sözlük, Format Dönüşümü, Boyut Analizi
+### Faz 1 — ÖĞRENCİ 1: Veri Temini, Sözlük, Format Dönüşümü, Boyut Analizi ✅
 
 #### T1.1 Veri temini (`src/ingest.py`)
 - [x] 2026-01 … 2026-05 Yellow Taxi parquet + zone lookup CSV + yardımcı dosyalar elle indirildi
@@ -154,7 +154,7 @@ Her **boyut × format** için ölçülenler:
 - [x] pandas bellek: tablo boyutu (`memory_usage(deep=True)`, süre dışında) + **okuma sırasındaki tepe bellek** (peak working set, her ölçüm ayrı süreçte)
 - [x] Her ölçüm **1 ısınma + 3 tekrar**, ortalama + std; sıcak işletim sistemi önbelleği koşulu
 - [x] Spark CSV ayrıca `inferSchema` ile → şemasız formatın maliyeti
-- [x] Her okumanın satır sayısı manifest ile doğrulandı (88 kombinasyon, 0 hata)
+- [x] Her okumanın satır sayısı manifest ile doğrulandı (85 kombinasyon, 0 hata)
 - **Adillik:** her okuma aynı tipli tabloyu üretir (CSV'de tarih parse; Spark CSV'ye Parquet şeması verilir). Spark oturum açılış süresi ölçüme dahil değildir.
 - **Çıktı:** `reports/results/io_benchmark.csv` (özet), `io_benchmark_raw.csv` (her tekrar)
 - Çalıştırma: `python -m src.benchmark_io [--sizes ...] [--engines ...]` (biten kombinasyonları atlar)
@@ -179,10 +179,14 @@ Her **boyut × format** için ölçülenler:
 7. **Paralellik:** Spark tek Parquet dosyasını byte aralıklarına göre 4–28 partition'a böler, ama veriyi yalnızca row group sayısı (1–4) kadar görev okur → planlanan partition ≠ gerçek paralellik.
 
 #### T1.5 Görselleştirme ve yorum (`notebooks/01_...ipynb`)
-- [ ] Grafik: format başına disk boyutu (boyutlara göre gruplu bar)
-- [ ] Grafik: okuma süresi vs veri boyutu (log ölçek çizgi grafik)
-- [ ] Grafik: pandas bellek kullanımı vs veri boyutu
-- [ ] **"Neden" yorumu:** kolon bazlı depolama, sıkıştırma + encoding (dictionary/RLE), gömülü şema (tip çıkarımı yok), column pruning, CSV'nin metin olarak parse maliyeti
+- [x] Grafik 1: format başına disk boyutu (full set)
+- [x] Grafik 2: okuma süresi vs veri boyutu (log-log, pandas | Spark yan yana)
+- [x] Grafik 3: uçtan uca süre — Spark oturum açılışı (11,4 sn) dahil → pandas + CSV ile kesişim **≈ 3,6M kayıt**
+- [x] Grafik 4: pandas tepe bellek vs veri boyutu + doğrusal ekstrapolasyon → **≈ 32M kayıtta RAM dolar**
+- [x] Grafik 5: column pruning hızlanması (pandas | Spark)
+- [x] **"Neden" yorumu:** kolon bazlı depolama, encoding (dictionary/RLE), ikili tipler, gömülü şema, column pruning, CSV parse maliyeti, tek çekirdek vs paralellik, bellek şişmesi
+- [x] Araştırma sorusuna cevap paragrafı + sınırlamalar (notebook §6)
+- Grafikler `src/plots_io.py` ile üretilir → `reports/figures/0{1..5}_*.png`; renkler format kimliğini taşır ve renk körlüğü doğrulamasından geçti
 
 ---
 
@@ -263,8 +267,8 @@ Eşikler `config.py`'de sabit olarak tutulur. Her kural için **kaç kaydı etki
 - [x] En az 2 format → CSV vs Parquet (snappy, gzip, zstd) yazıldı (T1.3)
 - [ ] İleri analitik işlem → join (zone lookup) + window (duplicate, bağlama duyarlı anomali) — T2.2/T2.3
 - [x] Performans ölçümü → disk boyutu, okuma süresi, tepe bellek (T1.4, 5 boyut × 4 format × 2 motor, 3 tekrar)
-- [ ] Görselleştirme → T1.5 + T2.5
-- [ ] "Neden" yorumu → her notebook'ta
+- [ ] Görselleştirme → T1.5 ✔ (5 grafik) + T2.5
+- [ ] "Neden" yorumu → notebook 01 ✔, notebook 02
 - [ ] Git ✔ + requirements.txt ✔ + README + mimari şema + kısa teknik rapor
 - [ ] Teknik katkı ayrı gösterim → README'de S1 / S2 başlıkları
 - [ ] Sınav soruları (5 seçenekli) → S1/S2 payı

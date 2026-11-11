@@ -43,6 +43,7 @@ WORKER_TIMEOUT_SEC = 900
 RESULT_PREFIX = "BENCH_RESULT "
 RAW_FILE = "io_benchmark_raw.csv"
 SUMMARY_FILE = "io_benchmark.csv"
+STARTUP_FILE = "spark_startup.csv"
 MB = 1024**2
 KEY = ["engine", "size", "format", "mode"]
 
@@ -115,8 +116,33 @@ def run_spark_worker(size: str, fmt: str) -> list[dict]:
     return results
 
 
+def measure_spark_startup() -> dict:
+    """Soğuk süreçte SparkSession açılışı + ilk küçük işin süresi (JVM başlatma maliyeti)."""
+    from src.spark_session import get_spark
+
+    started = time.perf_counter()
+    spark = get_spark("bench-startup")
+    spark.range(1).count()
+    seconds = time.perf_counter() - started
+    spark.stop()
+    return {"seconds": seconds}
+
+
+def bench_startup() -> pd.DataFrame:
+    _run_worker(["startup"])  # ısınma (JVM dosyaları önbelleğe girer)
+    records = []
+    for rep in range(1, REPEATS + 1):
+        results, error = _run_worker(["startup"])
+        records.append({"rep": rep, "status": error or "ok", **(results[0] if results else {})})
+    startup = pd.DataFrame(records)
+    startup.to_csv(config.RESULTS_DIR / STARTUP_FILE, index=False)
+    return startup
+
+
 def worker_main(args: argparse.Namespace) -> int:
-    if args.worker == "pandas":
+    if args.worker == "startup":
+        results = [measure_spark_startup()]
+    elif args.worker == "pandas":
         path = target_path(config.PROCESSED_DIR, args.size, args.format)
         results = [measure_pandas(path, args.mode)]
     else:
@@ -269,7 +295,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--sizes", nargs="+", choices=list(SIZES), default=list(SIZES))
     parser.add_argument("--engines", nargs="+", choices=ENGINES, default=list(ENGINES))
-    parser.add_argument("--worker", choices=ENGINES, help=argparse.SUPPRESS)
+    parser.add_argument("--startup", action="store_true", help="yalnızca Spark oturum açılış süresini ölç")
+    parser.add_argument("--worker", choices=(*ENGINES, "startup"), help=argparse.SUPPRESS)
     parser.add_argument("--size", choices=list(SIZES), help=argparse.SUPPRESS)
     parser.add_argument("--format", choices=list(FORMATS), help=argparse.SUPPRESS)
     parser.add_argument("--mode", choices=MODES, help=argparse.SUPPRESS)
@@ -281,6 +308,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.worker:
         return worker_main(args)
     logging.basicConfig(level=logging.INFO, format="%(message)s")
+    if args.startup:
+        logger.info("\n%s", bench_startup().to_string(index=False))
+        return 0
     try:
         orchestrate(args.sizes, args.engines)
     except BenchmarkError as exc:
