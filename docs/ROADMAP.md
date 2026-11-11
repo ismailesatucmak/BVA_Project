@@ -147,14 +147,36 @@ NYC Taxi/
 - Not (T1.4 için): tek dosyada row group sayısı 1–4 → Spark tek Parquet dosyasını en fazla row group sayısı kadar paralel okur; 28 çekirdeğin çoğu boşta kalabilir. Bu bir **bulgu** olarak raporlanır.
 
 #### T1.4 Veri büyüklüğü analizi (`src/benchmark_io.py`)
-Her **boyut × format** için ölçülecekler:
-- [ ] Disk boyutu (MB)
-- [ ] Tam okuma süresi — pandas ve Spark (`count()` ile tetiklenmiş)
-- [ ] Kolon seçerek okuma süresi (örn. 3 kolon) — Parquet column pruning etkisi
-- [ ] pandas bellek kullanımı (`memory_usage(deep=True)`) — disk boyutu vs RAM oranı
-- [ ] Her ölçüm **3 tekrar**, ortalama + std raporlanır
-- [ ] pandas'ın zorlandığı / başarısız olduğu nokta not edilir (araştırma sorusuna doğrudan cevap)
-- **Çıktı:** `reports/results/io_benchmark.csv`
+Her **boyut × format** için ölçülenler:
+- [x] Disk boyutu (MB) — manifest'ten
+- [x] Tam okuma süresi — pandas ve Spark. Spark `noop` yazımıyla tetiklenir (**`count()` değil**: Parquet'te metadata'dan cevap verir, veriyi okumaz)
+- [x] Kolon seçerek okuma süresi (3 kolon: pickup zamanı, mesafe, ücret) — column pruning etkisi
+- [x] pandas bellek: tablo boyutu (`memory_usage(deep=True)`, süre dışında) + **okuma sırasındaki tepe bellek** (peak working set, her ölçüm ayrı süreçte)
+- [x] Her ölçüm **1 ısınma + 3 tekrar**, ortalama + std; sıcak işletim sistemi önbelleği koşulu
+- [x] Spark CSV ayrıca `inferSchema` ile → şemasız formatın maliyeti
+- [x] Her okumanın satır sayısı manifest ile doğrulandı (88 kombinasyon, 0 hata)
+- **Adillik:** her okuma aynı tipli tabloyu üretir (CSV'de tarih parse; Spark CSV'ye Parquet şeması verilir). Spark oturum açılış süresi ölçüme dahil değildir.
+- **Çıktı:** `reports/results/io_benchmark.csv` (özet), `io_benchmark_raw.csv` (her tekrar)
+- Çalıştırma: `python -m src.benchmark_io [--sizes ...] [--engines ...]` (biten kombinasyonları atlar)
+
+**Ana bulgular (full set, 19M kayıt):**
+
+| | Disk | Okuma (tüm kolonlar) | Okuma (3 kolon) | pandas tepe bellek |
+|---|---|---|---|---|
+| pandas + CSV | 1.907 MB | **71,1 sn** | 35,5 sn | **9.437 MB (RAM'in %59'u)** |
+| pandas + Parquet zstd | 290 MB | 2,0 sn | 0,9 sn | 6.586 MB (%41) |
+| pandas + Parquet snappy | 392 MB | 1,8 sn | 0,6 sn | 5.815 MB (%36) |
+| Spark + CSV (şema verildi) | 1.907 MB | 8,1 sn | 4,5 sn | — |
+| Spark + CSV (`inferSchema`) | 1.907 MB | 15,7 sn | — | — |
+| Spark + Parquet snappy | 392 MB | 3,7 sn | 1,3 sn | — |
+
+1. **Klasik yaklaşım = pandas + CSV** yetersiz kalan kombinasyon: 19M'de 71 sn ve RAM'in %59'u. Tepe bellek ≈ satır başına 0,5 KB → doğrusal ekstrapolasyonla **~32M kayıtta 16 GB RAM dolar** (pratikte işletim sistemi payıyla ~25M).
+2. **Bellek şişmesi:** CSV diskte 1,9 GB → bellekte tablo 3,7 GB → okuma tepesi 9,4 GB (disk boyutunun ~5 katı).
+3. **Format, motordan daha belirleyici:** pandas + Parquet (1,8 sn), Spark + CSV'den (8,1 sn) hızlı. Tek makinede pyarrow'un çok iş parçacıklı C++ okuyucusu Spark'ın JVM yükünü geçiyor.
+4. **Column pruning:** Parquet'te 3 kolon okumak 3 kat hızlı; CSV'de yalnızca ~2 kat (metin satırının tamamı yine okunmak zorunda).
+5. **Şemasızlığın maliyeti:** Spark CSV'de `inferSchema` okuma süresini ~2 katına çıkarır (ek tam tarama).
+6. **Codec:** gzip en küçük ama en yavaş açılan; zstd ≈ gzip boyutunda, snappy hızına yakın.
+7. **Paralellik:** Spark tek Parquet dosyasını byte aralıklarına göre 4–28 partition'a böler, ama veriyi yalnızca row group sayısı (1–4) kadar görev okur → planlanan partition ≠ gerçek paralellik.
 
 #### T1.5 Görselleştirme ve yorum (`notebooks/01_...ipynb`)
 - [ ] Grafik: format başına disk boyutu (boyutlara göre gruplu bar)
@@ -240,7 +262,7 @@ Eşikler `config.py`'de sabit olarak tutulur. Her kural için **kaç kaydı etki
 - [x] Ölçeklenebilir teknoloji → PySpark (sözlük istatistikleri, boyut setleri; temizlik de Spark ile)
 - [x] En az 2 format → CSV vs Parquet (snappy, gzip, zstd) yazıldı (T1.3)
 - [ ] İleri analitik işlem → join (zone lookup) + window (duplicate, bağlama duyarlı anomali) — T2.2/T2.3
-- [ ] Performans ölçümü → disk boyutu ✔ (manifest); okuma süresi + bellek T1.4
+- [x] Performans ölçümü → disk boyutu, okuma süresi, tepe bellek (T1.4, 5 boyut × 4 format × 2 motor, 3 tekrar)
 - [ ] Görselleştirme → T1.5 + T2.5
 - [ ] "Neden" yorumu → her notebook'ta
 - [ ] Git ✔ + requirements.txt ✔ + README + mimari şema + kısa teknik rapor
