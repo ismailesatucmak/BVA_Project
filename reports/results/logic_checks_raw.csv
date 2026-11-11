@@ -1,0 +1,17 @@
+check,rows,pct,flex_fare_rows,non_flex_rows
+passenger_count_zero,64863,0.3414,0.0,64863.0
+passenger_count_over_max,22,0.0001,0.0,22.0
+distance_zero_or_negative,576744,3.0356,407165.0,169579.0
+distance_over_max,767,0.004,516.0,251.0
+fare_zero_or_negative,128776,0.6778,4900.0,123876.0
+total_zero_or_negative,121030,0.637,549.0,120481.0
+dropoff_before_pickup,5,0.0,3.0,2.0
+duration_under_min,429347,2.2598,13076.0,416271.0
+duration_over_max,7145,0.0376,181.0,6964.0
+speed_over_max,4928,0.0259,2074.0,2854.0
+pickup_outside_period,15,0.0001,0.0,15.0
+ratecode_unknown,637889,3.3574,0.0,637889.0
+location_unknown,119887,0.631,13736.0,106151.0
+cbd_fee_negative,76131,0.4007,24.0,76107.0
+any_check,1788321,9.4126,431608.0,1356713.0
+exact_duplicate_extra_copies,0,0.0,,

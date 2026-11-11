@@ -32,8 +32,13 @@ def _configure_environment() -> None:
     os.environ["PYSPARK_DRIVER_PYTHON"] = sys.executable
 
 
-def get_spark(app_name: str = "nyc-taxi", driver_memory: str = DEFAULT_DRIVER_MEMORY):
-    """Yerel modda, tüm çekirdekleri kullanan bir SparkSession döndürür."""
+def get_spark(app_name: str = "nyc-taxi", driver_memory: str = DEFAULT_DRIVER_MEMORY, cores: str = "*"):
+    """Yerel modda SparkSession döndürür (varsayılan: tüm çekirdekler).
+
+    Testlerde cores="1" kullanılır: Python listesinden createDataFrame, veriyi çekirdek
+    sayısı kadar parçaya böler ve Windows'ta her parça için ayrı bir Python işçisi
+    başlatır (28 çekirdekte ~35 sn). Parquet okuyan gerçek işler Python işçisi kullanmaz.
+    """
     _configure_environment()
     from pyspark.sql import SparkSession
 
@@ -44,7 +49,7 @@ def get_spark(app_name: str = "nyc-taxi", driver_memory: str = DEFAULT_DRIVER_ME
 
     return (
         SparkSession.builder.appName(app_name)
-        .master("local[*]")
+        .master(f"local[{cores}]")
         .config("spark.driver.memory", driver_memory)
         .config("spark.local.dir", str(SPARK_LOCAL_DIR))
         .config("spark.driver.host", "localhost")

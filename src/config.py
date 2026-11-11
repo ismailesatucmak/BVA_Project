@@ -50,6 +50,20 @@ TRIP_COLUMNS = (
 )
 
 
+# ---- Veri kalitesi eşikleri (T2.1 profil + T2.2 temizlik aynı değerleri kullanır)
+PERIOD_START = "2026-01-01 00:00:00"  # dahil
+PERIOD_END = "2026-06-01 00:00:00"  # hariç
+FLEX_FARE_PAYMENT_TYPE = 0
+UNKNOWN_RATECODE = 99
+UNKNOWN_LOCATION_IDS = (264, 265)
+MAX_PASSENGERS = 6
+MAX_TRIP_MILES = 100.0
+MIN_DURATION_MIN = 1.0
+MAX_DURATION_MIN = 180.0
+MAX_SPEED_MPH = 80.0
+PROFILE_PERCENTILES = (0.001, 0.01, 0.25, 0.5, 0.75, 0.99, 0.999)
+
+
 def trip_file_name(year: int, month: int) -> str:
     return f"yellow_tripdata_{year}-{month:02d}.parquet"
 
