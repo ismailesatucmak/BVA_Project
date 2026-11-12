@@ -255,12 +255,13 @@ Eşikler `config.py`'de sabit olarak tutulur. Her kural için **kaç kaydı etki
 
 ---
 
-### Faz 3 — Ortak Teslimlere Katkı
-- [ ] **Mimari şema** (`docs/architecture.png`): TLC → raw Parquet → Spark (dönüşüm + temizlik) → clean Parquet → S3 aggregation / S4 ML / S5 benchmark + dashboard
-- [ ] **README** bölümleri: veri kaynağı, kurulum, çalıştırma sırası, **Öğrenci 1 ve 2 teknik katkısı** (ayrı başlık)
-- [ ] **Kısa teknik rapor — S1/S2 bölümü:** yöntem, ölçüm tabloları, grafikler, "neden" yorumu (notebook'lardan derlenir)
-- [ ] **Sınav soruları:** projenin 10 sorusundan S1/S2 payı (5 seçenekli) — en az biri Parquet/format, biri veri temizliği üzerine
-- [ ] **Araştırma sorusuna katkı paragrafı:** "Hangi boyutta, hangi formatta klasik yaklaşım (pandas + CSV) yetersiz kalmaya başladı ve neden?"
+### Faz 3 — Ortak Teslimlere Katkı ✅ (S1/S2 payı)
+- [x] **Mimari şema** (`docs/architecture.png`, `python scripts/make_architecture.py` ile üretilir): TLC → ingest → S1 kolu (boyut setleri + ölçüm) / S2 kolu (profil → temizlik → `data/clean` → anomali) → S3/S4/S5
+- [x] **README**: veri kaynağı, mimari, Windows kurulumu, çalıştırma sırası, klasör yapısı, **Öğrenci 1 ve 2 ayrı bölümleri**; S3/S4/S5 için boş başlıklar
+- [x] **Kısa teknik rapor — S1/S2** (`docs/technical_report_s1_s2.md`): problem, mimari, yöntem, tablolar, "neden", sınırlamalar
+- [x] **Sınav soruları** (`docs/exam_questions_s1_s2.md`): 4 ana (format, ölçüm, eksik veri, anomali) + 2 yedek, cevap anahtarı ve açıklamalarla
+- [x] **Araştırma sorusuna katkı paragrafı:** notebook 01 §6, teknik rapor §3, README §6
+- **Diğer öğrencilere kalan:** README §8–10, raporun S3/S4/S5 bölümleri, sınavın kalan 6 sorusu
 
 ---
 
@@ -284,9 +285,9 @@ Eşikler `config.py`'de sabit olarak tutulur. Her kural için **kaç kaydı etki
 - [x] Performans ölçümü → disk boyutu, okuma süresi, tepe bellek (T1.4, 5 boyut × 4 format × 2 motor, 3 tekrar)
 - [x] Görselleştirme → T1.5 (5 grafik) + T2.5 (5 grafik)
 - [x] "Neden" yorumu → notebook 01 + notebook 02
-- [ ] Git ✔ + requirements.txt ✔ + README + mimari şema + kısa teknik rapor
-- [ ] Teknik katkı ayrı gösterim → README'de S1 / S2 başlıkları
-- [ ] Sınav soruları (5 seçenekli) → S1/S2 payı
+- [x] Git + requirements.txt + README + mimari şema + kısa teknik rapor (S1/S2 bölümü)
+- [x] Teknik katkı ayrı gösterim → README §6 Öğrenci 1, §7 Öğrenci 2
+- [x] Sınav soruları (5 seçenekli) → S1/S2 payı: 4 ana + 2 yedek
 
 ## 7. Riskler
 | Risk | Önlem |
