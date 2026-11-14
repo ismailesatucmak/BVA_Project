@@ -7,9 +7,21 @@ DATA_DIR = PROJECT_ROOT / "data"
 RAW_DIR = DATA_DIR / "raw"
 CLEAN_DIR = DATA_DIR / "clean"
 
-# Büyük çıktılar (boyut setleri, Spark geçici dosyaları) ayrı diskte tutulur.
-# Başka bir makinede NYC_DATA_ROOT ortam değişkeniyle değiştirilir.
-EXTERNAL_DATA_ROOT = Path(os.environ.get("NYC_DATA_ROOT", r"D:\BVAVeri"))
+# Büyük çıktılar (boyut setleri 5,2 GB, Spark geçici dosyaları) için kök klasör.
+# Öncelik: NYC_DATA_ROOT ortam değişkeni → D:\BVAVeri (varsa; ölçümler burada alındı)
+# → proje içindeki data/large (Git'e girmez). Böylece her makinede çalışır.
+_ORIGINAL_DATA_ROOT = Path(r"D:\BVAVeri")
+
+
+def _external_data_root() -> Path:
+    if os.environ.get("NYC_DATA_ROOT"):
+        return Path(os.environ["NYC_DATA_ROOT"])
+    if _ORIGINAL_DATA_ROOT.exists():
+        return _ORIGINAL_DATA_ROOT
+    return DATA_DIR / "large"
+
+
+EXTERNAL_DATA_ROOT = _external_data_root()
 PROCESSED_DIR = EXTERNAL_DATA_ROOT / "processed"
 SPARK_LOCAL_DIR = EXTERNAL_DATA_ROOT / "spark_tmp"
 RESULTS_DIR = PROJECT_ROOT / "reports" / "results"
@@ -75,6 +87,15 @@ METERED_MIN_FARE = 3.0  # NYC taksimetre açılış ücreti; altı "yer tutucu" 
 SHORT_TRIP_MILES = 1.0
 SHORT_TRIP_HIGH_FARE = 100.0  # kısa mesafe + bu ücretin üstü = ücret–mesafe tutarsızlığı
 ZONE_LOOKUP_PATH = RAW_DIR / ZONE_LOOKUP_FILE
+
+
+# ---- Takım için hazır temiz veri (GitHub Release eki; dosyalar 100 MB sınırı nedeniyle depoda değil)
+GITHUB_REPO = "ismailesatucmak/BVA_Project"
+DATA_RELEASE_TAG = "data-v1"
+CLEAN_ZIP_NAME = "nyc_taxi_clean_2026-01_05.zip"
+CLEAN_ZIP_URL = f"https://github.com/{GITHUB_REPO}/releases/download/{DATA_RELEASE_TAG}/{CLEAN_ZIP_NAME}"
+CLEAN_ZIP_SHA256 = "45ffa1372448c9f663eeae0752fa1814c78fdc6dd28d63d7760ec9b0c10d8652"
+CLEAN_ROWS = 17_210_961
 
 
 def trip_file_name(year: int, month: int) -> str:

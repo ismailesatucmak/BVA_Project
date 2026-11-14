@@ -14,6 +14,46 @@ Milyonlarca taksi yolculuğundan şehir içi ulaşım davranışlarını analiz 
 
 ---
 
+## 0. Takım için hızlı başlangıç
+
+**Depo:** https://github.com/ismailesatucmak/BVA_Project
+
+```powershell
+# 1) Klonla (proje yolunda Türkçe karakter OLMASIN — Spark/Hadoop Windows'ta bozuluyor)
+git clone https://github.com/ismailesatucmak/BVA_Project.git
+cd BVA_Project
+
+# 2) Ortam (önce Java 17 + winutils kurulu olmalı → §3)
+python -m venv .venv
+.\.venv\Scripts\activate
+pip install -r requirements.txt
+python scripts/smoke_test_spark.py        # sonunda "TÜM TESTLER BAŞARILI" görmelisiniz
+
+# 3) Temiz veriyi al (Öğrenci 3/4/5'in girdisi) — Release'den 479 MB indirir, doğrular, data/clean'e açar
+python -m src.fetch_data
+```
+
+```python
+# 4) Kullan
+from src.spark_session import get_spark
+df = get_spark().read.parquet("data/clean")    # 17.210.961 kayıt
+```
+
+**Veri nerede, nasıl alınır?** Veri dosyaları Git'te **yok** (`data/` `.gitignore`'da; tek dosyalar GitHub'ın 100 MB sınırını aşıyor).
+
+| Veri | Boyut | Nasıl alınır |
+|---|---|---|
+| Temiz veri `data/clean` | 479 MB | `python -m src.fetch_data` → [Release `data-v1`](https://github.com/ismailesatucmak/BVA_Project/releases/tag/data-v1) eki, SHA-256 + satır sayısı doğrulamalı. Elle indirirseniz zip'i `data/clean/` içine açın (içinde `pickup_year=2026/` olmalı). |
+| Ham veri `data/raw` | 310 MB | `python -m src.ingest` → resmi TLC kaynağından indirir ve doğrular |
+| Boyut setleri (100K…19M × 4 format) | 5,2 GB | `python -m src.build_sizes` (~12 dk). Yalnızca format/boyut deneyi yapacaksanız gerekir (Öğrenci 5) |
+| Ölçüm sonuçları, grafikler | küçük | Depoda: `reports/results/*.csv`, `reports/figures/*.png` |
+
+Temiz veriyi kendiniz üretmek isterseniz: `python -m src.ingest` → `python -m src.clean` (~3 dk + indirme). Sonuç birebir aynıdır.
+
+**Kendi bölümünüzü eklerken:** kodu `src/` altına, notebook'u `notebooks/03_…`, `04_…`, `05_…` olarak, sonuçları `reports/results/`, grafikleri `reports/figures/11_…` ve sonrası olarak koyun; README'de kendi bölümünüzü (§8–10) doldurun. Yeni eşikleri `src/config.py`'ye, Spark oturumunu her zaman `get_spark()` ile açın. Claude Code kullanıyorsanız [`CLAUDE.md`](CLAUDE.md) projeyi ona otomatik tanıtır.
+
+---
+
 ## 1. Veri
 
 - **Kaynak:** [NYC TLC Trip Record Data](https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page) — Yellow Taxi, **2026 Ocak–Mayıs**
@@ -43,7 +83,7 @@ pip install -r requirements.txt
 python scripts/smoke_test_spark.py      # Spark kurulum testi
 ```
 
-- Büyük çıktılar (boyut setleri 5,2 GB, Spark geçici dosyaları) varsayılan olarak `D:\BVAVeri` altına yazılır. Başka bir klasör için: `$env:NYC_DATA_ROOT = "E:\veri"`.
+- Büyük çıktılar (boyut setleri 5,2 GB, Spark geçici dosyaları) için kök klasör sırasıyla: `NYC_DATA_ROOT` ortam değişkeni → `D:\BVAVeri` (varsa; Öğrenci 1'in ölçümleri burada alındı) → proje içindeki `data/large`. Örn. `$env:NYC_DATA_ROOT = "E:\veri"`.
 - Bilgisayar adı alt çizgi içeriyorsa (örn. `Ismail_Esat`) Spark URL'si geçersiz olur; `src/spark_session.py` bunu `localhost` ile çözer. Her yerde `get_spark()` kullanılır.
 
 ## 4. Çalıştırma sırası
@@ -60,15 +100,17 @@ python scripts/smoke_test_spark.py      # Spark kurulum testi
 | 8 | `notebooks/01_*.ipynb`, `notebooks/02_*.ipynb` | grafikler ve yorum | — |
 
 \* 28 çekirdek, 16 GB RAM, NVMe SSD. Her script kaldığı yerden devam eder veya sonucu yeniden üretir.
+Yalnızca temiz veri gerekiyorsa bu tablonun yerine `python -m src.fetch_data` yeterlidir (§0).
 
-**Testler:** `python -m pytest tests` (67 test; Spark testleri tek çekirdekle çalışır, ~1,5 dk).
+**Testler:** `python -m pytest tests` (75 test; Spark testleri tek çekirdekle çalışır, ~2 dk).
 
 ## 5. Klasör yapısı
 
 ```
 src/            ingest, dictionary_stats, build_sizes, benchmark_io, plots_io        (Öğrenci 1)
                 quality, profile_data, clean, anomaly, plots_clean                    (Öğrenci 2)
-                config (yollar + eşikler), spark_session (Windows ayarları)           (ortak)
+                config (yollar + eşikler), spark_session (Windows ayarları),
+                fetch_data (temiz veriyi Release'den kurar)                           (ortak)
 notebooks/      01_data_acquisition_and_formats, 02_cleaning_and_anomalies
 reports/        results/*.csv (tüm ölçümler) · figures/01–10_*.png
 docs/           ROADMAP, data_dictionary, cleaning_rules, technical_report_s1_s2,
