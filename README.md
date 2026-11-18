@@ -196,7 +196,7 @@ df = get_spark().read.parquet("data/clean")   # 17,2M kayıt; pickup_year/pickup
 
 Dört ana özet ayrı ayrı **17.210.961** kayda, ödeme payları yuvarlama öncesinde %100'e ulaşır. Bulgular temiz veride gözlenen binişleri anlatır. Yoğunluğun nedeni, kişi başına kullanım veya nakit bahşişler için ek veri gerekir.
 
-**Yeniden üretim.** Temiz Parquet verisini §0'daki `python -m src.fetch_data` ile edin. Ardından proje kökünde çalıştırın. İlk komut gerekirse küçük TLC bölge tablosunu indirir.
+**Yeniden üretim.** Temiz Parquet verisini §0'daki `python -m src.fetch_data` ile edin. Ardından proje kökünde çalıştırın. İlk komut, eksikse yalnızca `data/raw/taxi_zone_lookup.csv` dosyasını indirir. `python -m src.ingest` çalıştırıldıysa bölge tablosu ham veriyle birlikte zaten indirilir.
 
 ```powershell
 python -c "from src.config import ZONE_LOOKUP_URL, ZONE_LOOKUP_PATH; from src.ingest import ensure_file; ensure_file(ZONE_LOOKUP_URL, ZONE_LOOKUP_PATH)"
