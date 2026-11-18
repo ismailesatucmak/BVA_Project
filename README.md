@@ -8,7 +8,7 @@ Milyonlarca taksi yolculuğundan şehir içi ulaşım davranışlarını analiz 
 |---|---|---|
 | **Öğrenci 1** | Veriyi temin eder, veri sözlüğünü hazırlar, CSV/Parquet dönüşümünü ve veri büyüklüğü analizini yapar | ✅ |
 | **Öğrenci 2** | Eksik/hatalı kayıtları temizler; anormal mesafe, ücret ve süre değerlerini analiz eder | ✅ |
-| Öğrenci 3 | Saat / gün / bölge / ödeme türü aggregation analizleri | — |
+| Öğrenci 3 | Saat / gün / bölge / ödeme türü aggregation analizleri | ✅ |
 | Öğrenci 4 | ML modeli | — |
 | Öğrenci 5 | Pandas vs Spark işleme performansı + dashboard | — |
 
@@ -98,6 +98,7 @@ python scripts/smoke_test_spark.py      # Spark kurulum testi
 | 6 | `python -m src.clean` | temizlik → `data/clean` | ~2 dk |
 | 7 | `python -m src.anomaly` | anomali analizi (window + join) | ~3 dk |
 | 8 | `notebooks/01_*.ipynb`, `notebooks/02_*.ipynb` | grafikler ve yorum | — |
+| 9 | `python -m src.aggregate_trips --analysis all --export` | saati, günü, biniş bölgesini ve ödeme türünü özetler, CSV'leri yazar (§8) | — |
 
 \* 28 çekirdek, 16 GB RAM, NVMe SSD. Her script kaldığı yerden devam eder veya sonucu yeniden üretir.
 Yalnızca temiz veri gerekiyorsa bu tablonun yerine `python -m src.fetch_data` yeterlidir (§0).
@@ -109,10 +110,11 @@ Yalnızca temiz veri gerekiyorsa bu tablonun yerine `python -m src.fetch_data` y
 ```
 src/            ingest, dictionary_stats, build_sizes, benchmark_io, plots_io        (Öğrenci 1)
                 quality, profile_data, clean, anomaly, plots_clean                    (Öğrenci 2)
+                aggregate_trips                                                   (Öğrenci 3)
                 config (yollar + eşikler), spark_session (Windows ayarları),
                 fetch_data (temiz veriyi Release'den kurar)                           (ortak)
-notebooks/      01_data_acquisition_and_formats, 02_cleaning_and_anomalies
-reports/        results/*.csv (tüm ölçümler) · figures/01–10_*.png
+notebooks/      01_data_acquisition_and_formats, 02_cleaning_and_anomalies, 03_aggregation
+reports/        results/*.csv (ölçümler ve özetler) · figures/01–17_*.png
 docs/           ROADMAP, data_dictionary, cleaning_rules, technical_report_s1_s2,
                 exam_questions_s1_s2, PROJECT_REQUIREMENTS, architecture.png
 data/           raw/ (TLC) · clean/ (temiz veri) · samples/ — Git'e girmez
@@ -194,9 +196,10 @@ df = get_spark().read.parquet("data/clean")   # 17,2M kayıt; pickup_year/pickup
 
 Dört ana özet ayrı ayrı **17.210.961** kayda, ödeme payları yuvarlama öncesinde %100'e ulaşır. Bulgular temiz veride gözlenen binişleri anlatır. Yoğunluğun nedeni, kişi başına kullanım veya nakit bahşişler için ek veri gerekir.
 
-**Yeniden üretim.** `data/clean` ve `data/raw/taxi_zone_lookup.csv` hazırken proje kökünden:
+**Yeniden üretim.** Temiz Parquet verisini §0'daki `python -m src.fetch_data` ile edin. Ardından proje kökünde çalıştırın. İlk komut gerekirse küçük TLC bölge tablosunu indirir.
 
 ```powershell
+python -c "from src.config import ZONE_LOOKUP_URL, ZONE_LOOKUP_PATH; from src.ingest import ensure_file; ensure_file(ZONE_LOOKUP_URL, ZONE_LOOKUP_PATH)"
 python -m src.aggregate_trips --analysis all --export
 ```
 
