@@ -175,7 +175,32 @@ df = get_spark().read.parquet("data/clean")   # 17,2M kayıt; pickup_year/pickup
 Şema ve garanti edilen koşullar: [`docs/data_dictionary.md` §8](docs/data_dictionary.md). Flex Fare kayıtlarında (`is_flex_fare = True`) 5 kolon null'dur.
 
 ## 8. Öğrenci 3 — Aggregation analizleri
-*(Öğrenci 3 dolduracak)*
+
+**Notebook:** [`notebooks/03_aggregation.ipynb`](notebooks/03_aggregation.ipynb) · **Girdi:** Ocak–Mayıs 2026, 17.210.961 temiz Yellow Taxi yolculuğu
+
+| İş | Çıktı | Teknik ayrıntı |
+|---|---|---|
+| Saatlik hacim | [Saat grafiği](reports/figures/11_s3_hour.png), [ısı haritası](reports/figures/15_s3_weekday_hour.png) | `groupBy` ile 24 saat ve 168 hafta günü × saat grubu. Isı haritasında her hücre ilgili hafta gününün görülme sayısına bölünür. |
+| Günlük hacim | [Gün grafiği](reports/figures/12_s3_day.png) | 151 takvim günü doğrulanır. Son 7 gün için hareketli ortalama, `lag(7)` ile önceki haftanın aynı gününe göre değişim. |
+| Biniş bölgeleri | [İlk 10 bölge](reports/figures/13_s3_zone.png), [harita](reports/figures/16_s3_pickup_map.png), [ilçe karşılaştırması](reports/figures/17_s3_zone_concentration.png) | Bölge koduyla sayım → TLC tablosuyla `broadcast` + `left join`. İlçe içinde sıralı pencereyle en az %80'e ulaşılan ilk sıra. |
+| Ödeme türleri | [Pay grafiği](reports/figures/14_s3_payment.png), [ödeme tablosu](reports/results/s3_payment.csv) | Yolculuk payı ve kayıt başına ortalama toplam tutar. Uygun kredi kartı kayıtlarında ağırlıklı bahşiş oranı: toplam kayıtlı bahşiş / toplam taksimetre ücreti. |
+
+**Sonuçlar:**
+
+- **Saat:** New York yerel saatiyle **18.00–18.59** en yoğun aralık (1.150.635 biniş). Hafta günü başına ortalama alındığında hafta içindeki en yoğun hücre perşembe 21.00 (8.830), hafta sonundaki cumartesi 18.00 (8.853).
+- **Gün:** En yoğun gün **25 Nisan 2026** (153.232 biniş). Bir önceki cumartesiye (141.356) göre **%8,4 artış**.
+- **Bölge:** Manhattan'da Central Park'ın doğusundaki **Upper East Side South** ilk sırada (815.297). İlçe binişlerinin en az %80'ine Queens'te **4/69**, Manhattan'da **30/67** gözlenen bölgeyle ulaşıldı. Newark (77 biniş) ayrı tutuldu. 264 ve 265 kodlarında temiz biniş kaydı yok.
+- **Ödeme:** Kredi kartı **%64,96**, Flex Fare **%25,45**. Kredi kartı grubunda ortalama toplam tutar **29,05 USD**, ağırlıklı kayıtlı bahşiş oranı **%23,50** (11.180.868 uygun kayıt). Bahşiş oranının paydası `fare_amount`, ortalama toplam tutarın kaynağı `total_amount`.
+
+Dört ana özet ayrı ayrı **17.210.961** kayda, ödeme payları yuvarlama öncesinde %100'e ulaşır. Bulgular temiz veride gözlenen binişleri anlatır. Yoğunluğun nedeni, kişi başına kullanım veya nakit bahşişler için ek veri gerekir.
+
+**Yeniden üretim.** `data/clean` ve `data/raw/taxi_zone_lookup.csv` hazırken proje kökünden:
+
+```powershell
+python -m src.aggregate_trips --analysis all --export
+```
+
+Komut `reports/results/s3_*.csv` tablolarını üretir. Notebook bu tabloları okuyup grafikleri oluşturur. Haritayı yeniden çizmek için [NYC Taxi Zones](https://catalog.data.gov/dataset/nyc-taxi-zones) GeoJSON dosyasını `data/raw/taxi_zones.geojson` olarak kaydedin. Gün × saat görseli [Loayib'in NYC Taxi analizinden](https://github.com/Loayib/NYC_Taxi_Analysis) esinlendi.
 
 ## 9. Öğrenci 4 — ML modeli
 *(Öğrenci 4 dolduracak)*
@@ -188,4 +213,5 @@ df = get_spark().read.parquet("data/clean")   # 17,2M kayıt; pickup_year/pickup
 ## Belgeler
 - [Kısa teknik rapor — Öğrenci 1 ve 2](docs/technical_report_s1_s2.md)
 - [Sınav soruları — Öğrenci 1 ve 2](docs/exam_questions_s1_s2.md)
+- [Sınav soruları — Öğrenci 3](docs/exam_questions_s3.md)
 - [Yol haritası ve kararlar](docs/ROADMAP.md) · [Proje gereksinimleri](docs/PROJECT_REQUIREMENTS.md)
