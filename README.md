@@ -215,6 +215,7 @@ Komut `reports/results/s3_*.csv` tablolarını üretir. Notebook bu tabloları o
 
 ## Belgeler
 - [Kısa teknik rapor — Öğrenci 1 ve 2](docs/technical_report_s1_s2.md)
+- [Kısa teknik rapor — Öğrenci 3](docs/technical_report_s3.md)
 - [Sınav soruları — Öğrenci 1 ve 2](docs/exam_questions_s1_s2.md)
 - [Sınav soruları — Öğrenci 3](docs/exam_questions_s3.md)
 - [Yol haritası ve kararlar](docs/ROADMAP.md) · [Proje gereksinimleri](docs/PROJECT_REQUIREMENTS.md)

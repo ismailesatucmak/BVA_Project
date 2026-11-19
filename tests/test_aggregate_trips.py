@@ -52,6 +52,24 @@ def test_payment_counts_preserve_flex_fare_and_sum_to_100(spark):
     ]
 
 
+def test_payment_tip_percentage_uses_eligible_totals(spark):
+    trips = spark.sql("""
+        SELECT * FROM VALUES
+            (1, 12.0, 10.0, 2.0), (1, 33.0, 30.0, 3.0),
+            (1,  5.0,  0.0, 5.0), (1, 19.0, 20.0, -1.0),
+            (2, 15.0, 10.0, 5.0)
+        AS trips(payment_type, total_amount, fare_amount, tip_amount)
+    """)
+
+    rows = {row.payment_type: row for row in payment_trip_counts(trips).collect()}
+
+    assert rows[1].trip_count == 4
+    assert rows[1].tip_eligible_trips == 2
+    assert rows[1].weighted_tip_pct == 12.5
+    assert rows[2].tip_eligible_trips == 0
+    assert rows[2].weighted_tip_pct is None
+
+
 def test_weekday_hour_counts_group_both_dimensions(spark):
     from src.aggregate_trips import weekday_hour_trip_counts
 
