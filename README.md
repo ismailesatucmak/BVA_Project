@@ -8,7 +8,7 @@ Milyonlarca taksi yolculuğundan şehir içi ulaşım davranışlarını analiz 
 |---|---|---|
 | **Öğrenci 1** | Veriyi temin eder, veri sözlüğünü hazırlar, CSV/Parquet dönüşümünü ve veri büyüklüğü analizini yapar | ✅ |
 | **Öğrenci 2** | Eksik/hatalı kayıtları temizler; anormal mesafe, ücret ve süre değerlerini analiz eder | ✅ |
-| Öğrenci 3 | Saat / gün / bölge / ödeme türü aggregation analizleri | ✅ |
+| **Öğrenci 3** | Saat, gün, bölge ve ödeme türüne göre yolculukları analiz eder | ✅ |
 | Öğrenci 4 | ML modeli | — |
 | Öğrenci 5 | Pandas vs Spark işleme performansı + dashboard | — |
 
@@ -110,10 +110,11 @@ Yalnızca temiz veri gerekiyorsa bu tablonun yerine `python -m src.fetch_data` y
 ```
 src/            ingest, dictionary_stats, build_sizes, benchmark_io, plots_io        (Öğrenci 1)
                 quality, profile_data, clean, anomaly, plots_clean                    (Öğrenci 2)
-                aggregate_trips                                                   (Öğrenci 3)
+                aggregate_trips, compare_aggregation                              (Öğrenci 3)
                 config (yollar + eşikler), spark_session (Windows ayarları),
                 fetch_data (temiz veriyi Release'den kurar)                           (ortak)
-notebooks/      01_data_acquisition_and_formats, 02_cleaning_and_anomalies, 03_aggregation
+notebooks/      01_data_acquisition_and_formats, 02_cleaning_and_anomalies,
+                03_aggregation, 03_aggregation_ders
 reports/        results/*.csv (ölçümler ve özetler) · figures/01–17_*.png
 docs/           ROADMAP, data_dictionary, cleaning_rules, technical_report_s1_s2,
                 exam_questions_s1_s2, PROJECT_REQUIREMENTS, architecture.png
@@ -178,7 +179,9 @@ df = get_spark().read.parquet("data/clean")   # 17,2M kayıt; pickup_year/pickup
 
 ## 8. Öğrenci 3 — Aggregation analizleri
 
-**Notebook:** [`notebooks/03_aggregation.ipynb`](notebooks/03_aggregation.ipynb) · **Girdi:** Ocak–Mayıs 2026, 17.210.961 temiz Yellow Taxi yolculuğu
+**Notebook:** [`notebooks/03_aggregation_ders.ipynb`](notebooks/03_aggregation_ders.ipynb) · **Girdi:** Ocak–Mayıs 2026, 17.210.961 temiz Yellow Taxi yolculuğu
+
+Ders notebook'u altı Spark özetini aynı temiz Parquet dosyalarından pandas ile yeniden üretir, sonuçları karşılaştırır ve uçtan uca süreleri gösterir.
 
 | İş | Çıktı | Teknik ayrıntı |
 |---|---|---|
@@ -203,7 +206,7 @@ python -c "from src.config import ZONE_LOOKUP_URL, ZONE_LOOKUP_PATH; from src.in
 python -m src.aggregate_trips --analysis all --export
 ```
 
-Komut `reports/results/s3_*.csv` tablolarını üretir. Notebook bu tabloları okuyup grafikleri oluşturur. Haritayı yeniden çizmek için [NYC Taxi Zones](https://catalog.data.gov/dataset/nyc-taxi-zones) GeoJSON dosyasını `data/raw/taxi_zones.geojson` olarak kaydedin. Gün × saat görseli [Loayib'in NYC Taxi analizinden](https://github.com/Loayib/NYC_Taxi_Analysis) esinlendi.
+Komut `reports/results/s3_*.csv` tablolarını üretir. Ders notebook’u altı özeti temiz Parquet verisinden yeniden hesaplar, kayıtlı CSV sonuçlarıyla karşılaştırır ve grafikleri oluşturur; `src/compare_aggregation.py` karşılaştırma ve ölçüm işlevlerini içerir. Kayıtlı çıktılar notebook açıldığında veri veya Spark kurulumu olmadan görüntülenebilir. Haritayı yeniden çizmek için [NYC Taxi Zones](https://catalog.data.gov/dataset/nyc-taxi-zones) GeoJSON dosyasını `data/raw/taxi_zones.geojson` olarak kaydedin. Gün × saat görseli [Loayib'in NYC Taxi analizinden](https://github.com/Loayib/NYC_Taxi_Analysis) esinlendi.
 
 ## 9. Öğrenci 4 — ML modeli
 *(Öğrenci 4 dolduracak)*

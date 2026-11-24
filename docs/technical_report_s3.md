@@ -11,4 +11,4 @@ Ocak–Mayıs 2026 dönemindeki 17.210.961 temiz Yellow Taxi yolculuğunu PySpar
 
 Sonuçlar veri dönemindeki kayıtlı binişleri anlatır. Nakit bahşiş bu ölçümde yer almaz. Yoğunluk farklarının nedenini belirlemek için ek veri gerekir.
 
-[README §8](../README.md#8-öğrenci-3--aggregation-analizleri) temiz veri ve bölge tablosunun hazırlanmasını açıklar. `python -m src.aggregate_trips --analysis all --export` özet CSV'lerini üretir. [Notebook](../notebooks/03_aggregation.ipynb) bu CSV'lerden grafikleri oluşturur. [Testler](../tests/test_aggregate_trips.py) gruplama, pencere ve eşik davranışlarını küçük veri örnekleriyle kontrol eder.
+[README §8](../README.md#8-öğrenci-3--aggregation-analizleri) temiz veri ve bölge tablosunun hazırlanmasını açıklar. `python -m src.aggregate_trips --analysis all --export` özet CSV'lerini üretir. [Ders notebook'u](../notebooks/03_aggregation_ders.ipynb) altı özeti temiz Parquet üzerinden PySpark ve pandas ile yeniden üretir ve kayıtlı CSV'lerle doğrular. [Testler](../tests/test_aggregate_trips.py) gruplama, pencere ve eşik davranışlarını küçük veri örnekleriyle kontrol eder.
