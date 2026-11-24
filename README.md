@@ -9,7 +9,7 @@ Milyonlarca taksi yolculuğundan şehir içi ulaşım davranışlarını analiz 
 | **Öğrenci 1** | Veriyi temin eder, veri sözlüğünü hazırlar, CSV/Parquet dönüşümünü ve veri büyüklüğü analizini yapar | ✅ |
 | **Öğrenci 2** | Eksik/hatalı kayıtları temizler; anormal mesafe, ücret ve süre değerlerini analiz eder | ✅ |
 | **Öğrenci 3** | Saat, gün, bölge ve ödeme türüne göre yolculukları analiz eder | ✅ |
-| Öğrenci 4 | ML modeli | — |
+| **Öğrenci 4** | PySpark MLlib ile yolculuk süresi tahmini (100K/1M/5M) ve scikit-learn kıyaslaması | ✅ |
 | Öğrenci 5 | Pandas vs Spark işleme performansı + dashboard | — |
 
 ---
@@ -208,8 +208,45 @@ python -m src.aggregate_trips --analysis all --export
 
 Komut `reports/results/s3_*.csv` tablolarını üretir. Ders notebook’u altı özeti temiz Parquet verisinden yeniden hesaplar, kayıtlı CSV sonuçlarıyla karşılaştırır ve grafikleri oluşturur; `src/compare_aggregation.py` karşılaştırma ve ölçüm işlevlerini içerir. Kayıtlı çıktılar notebook açıldığında veri veya Spark kurulumu olmadan görüntülenebilir. Haritayı yeniden çizmek için [NYC Taxi Zones](https://catalog.data.gov/dataset/nyc-taxi-zones) GeoJSON dosyasını `data/raw/taxi_zones.geojson` olarak kaydedin. Gün × saat görseli [Loayib'in NYC Taxi analizinden](https://github.com/Loayib/NYC_Taxi_Analysis) esinlendi.
 
-## 9. Öğrenci 4 — ML modeli
-*(Öğrenci 4 dolduracak)*
+## 9. Öğrenci 4 — ML modeli: Yolculuk Süresi Tahmini
+
+**Notebook:** [`notebooks/04_ml_duration_prediction.ipynb`](notebooks/04_ml_duration_prediction.ipynb) · **Girdi:** Ocak–Mayıs 2026, 17.210.961 temiz Yellow Taxi yolculuğu
+
+Yolculuk süresi (`trip_duration_min`) tahmini için ölçeklenebilir bir PySpark MLlib pipeline'ı kuruldu; `LinearRegression` (baseline) ve `GBTRegressor` modelleri 100K, 1M ve 5M kayıtlık ölçeklerde eğitilerek klasik `scikit-learn` (`Ridge` ve `HistGradientBoostingRegressor`) yaklaşımıyla hız, doğruluk ve bellek açısından karşılaştırıldı.
+
+| İş | Çıktı | Teknik ayrıntı |
+|---|---|---|
+| PySpark ML pipeline | `src/ml_duration.py` | `StringIndexer(handleInvalid="keep")` + `OneHotEncoder` (`PULocationID`, `DOLocationID`); `VectorAssembler`; `LinearRegression` ve `GBTRegressor(maxIter=15, maxDepth=5)` |
+| Ölçeklenebilirlik deneyi | [`s4_spark_results.csv`](reports/results/s4_spark_results.csv) | 100K / 1M / 5M örneklemde eğitim; `sample(seed=42)` ile tekrarlanabilir alt örnekleme |
+| Scikit-learn kıyaslaması | [`s4_comparison.csv`](reports/results/s4_comparison.csv) | `Ridge` ve `HistGradientBoostingRegressor`; her boyut ayrı subprocess'te (`psutil` ile tepe RAM) |
+| Feature önemi | [`s4_feature_importance.csv`](reports/results/s4_feature_importance.csv) | GBT modelinin özellik önem skorları (1M örneklem) |
+| Grafikler | [Şekil 18](reports/figures/18_s4_scalability.png), [19](reports/figures/19_s4_model_comparison.png), [20](reports/figures/20_s4_feature_actual_pred.png) | Ölçeklenebilirlik (süre + RAM); LR vs GBT (RMSE & R²); özellik önemi + gerçek vs tahmin |
+
+**Sonuçlar (1M ve 5M özet):**
+
+| Framework | Model | Boyut | RMSE (dk) | MAE (dk) | R² | Eğitim (sn) | Tepe Python RAM (MB) |
+|---|---|---|---:|---:|---:|---:|---:|
+| PySpark | LinearRegression | 1M | 7,1871 | 4,9370 | 0,6487 | 5,19 | 72,4 |
+| PySpark | GBTRegressor | 1M | 6,2729 | 4,1399 | 0,7324 | 61,93 | 72,4 |
+| PySpark | GBTRegressor | 5M | 6,2842 | 4,1415 | 0,7297 | 1303,91 | 72,4 |
+| scikit-learn | Ridge | 5M | 7,4119 | 5,1396 | 0,6261 | 0,23 | 3124,6 |
+| scikit-learn | HistGradientBoosting | 5M | 5,9263 | 3,8849 | 0,7610 | 12,16 | 3132,2 |
+
+- **Feature önemi:** `trip_distance` (**0,6201**) açık ara ilk sırada; ardından `pickup_hour` (**0,1444**), `pickup_dow` (**0,1005**), `cbd_congestion_fee` (**0,0273**) ve bölge kodları gelir.
+- **GBT > LR:** Mesafe–süre ilişkisi doğrusal değildir; GBTRegressor, LinearRegression'a göre RMSE'de ~0,91 dk (~%13) iyileşme sağlar (`R²` 0,649 → 0,732).
+- **Klasik yaklaşımın bellek sınırı:** `scikit-learn` tek makinede 5M satırda hızlı çalışsa da tüm veriyi belleğe yüklediği için 100K'da 2,44 GB, 5M'de **3,13 GB** RAM tüketir. PySpark ise Python sürücüsünü ~72 MB'ta tutar ve 5M GBT sırasında JVM belleği dolduğunda diske spill ederek çökmeden tamamlar.
+- **Flex Fare ve Data Leakage koruması:** `dropna()` kullanılmadı; Flex Fare'de null olan 5 kolon ile ücret/varış kolonları feature setinden dışlanarak 17.210.961 kaydın tamamı korundu.
+
+**Yeniden üretim:**
+
+```powershell
+python -m src.fetch_data             # veri yoksa indir
+python -m src.ml_duration            # tam pipeline + kıyaslama + grafikler
+python -m src.ml_duration --plots-only  # kayıtlı CSV'lerden grafikleri yeniden üret
+python -m pytest tests/test_ml_duration.py -v
+```
+
+Ayrıntılı teknik yorum: [`docs/technical_report_s4.md`](docs/technical_report_s4.md) · Sınav soruları: [`docs/exam_questions_s4.md`](docs/exam_questions_s4.md)
 
 ## 10. Öğrenci 5 — İşleme performansı ve dashboard
 *(Öğrenci 5 dolduracak. Öğrenci 1'in boyut setleri `D:\BVAVeri\processed\size_*` altında kullanıma hazır.)*
@@ -219,6 +256,8 @@ Komut `reports/results/s3_*.csv` tablolarını üretir. Ders notebook’u altı 
 ## Belgeler
 - [Kısa teknik rapor — Öğrenci 1 ve 2](docs/technical_report_s1_s2.md)
 - [Kısa teknik rapor — Öğrenci 3](docs/technical_report_s3.md)
+- [Kısa teknik rapor — Öğrenci 4](docs/technical_report_s4.md)
 - [Sınav soruları — Öğrenci 1 ve 2](docs/exam_questions_s1_s2.md)
 - [Sınav soruları — Öğrenci 3](docs/exam_questions_s3.md)
+- [Sınav soruları — Öğrenci 4](docs/exam_questions_s4.md)
 - [Yol haritası ve kararlar](docs/ROADMAP.md) · [Proje gereksinimleri](docs/PROJECT_REQUIREMENTS.md)
