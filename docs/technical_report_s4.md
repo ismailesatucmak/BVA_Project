@@ -48,8 +48,8 @@ Kaynak: [`reports/results/s4_comparison.csv`](../reports/results/s4_comparison.c
 
 ## Teknik yorumlar ("neden?")
 
-- **Karşılaştırma artık adil.** OLS iki çerçevede aynı sonucu verdi (RMSE farkı ≤ 0,001 dk). Doğruluk farkları veri veya özellik farkından gelmiyor; yalnızca algoritma uygulamasından geliyor.
-- **Doğrusal olmayan model ~%23 daha iyi.** GBT, LinearRegression'a göre RMSE'yi 7,17'den 5,48 dakikaya indiriyor (R² 0,65 → 0,79). Süre mesafeyle doğrusal artmıyor. Bölge ve saat etkileşimleri (Manhattan içi yoğun saat, havalimanı otoyolu) ağaç bölmeleriyle yakalanıyor. Bölgenin toplam önemi (0,31), saat ve günün toplamından (0,21) büyük.
+- **Karşılaştırma artık adil.** OLS iki çerçevede aynı sonucu verdi (RMSE farkı ≤ 0,002 dk). Doğruluk farkları veri veya özellik farkından gelmiyor; yalnızca algoritma uygulamasından geliyor.
+- **Doğrusal olmayan model ~%24 daha iyi.** GBT, LinearRegression'a göre RMSE'yi 7,18'den 5,48 dakikaya indiriyor (R² 0,65 → 0,79). Süre mesafeyle doğrusal artmıyor. Bölge ve saat etkileşimleri (Manhattan içi yoğun saat, havalimanı otoyolu) ağaç bölmeleriyle yakalanıyor. Bölgenin toplam önemi (0,31), saat ve günün toplamından (0,21) büyük.
 - **Veri arttıkça yalnızca esnek model kazanıyor.** LinearRegression'ın R²'si 100K'dan 5M'e sabit kalıyor (0,643–0,648). Doğrusal model mesafe × bölge × saat etkileşimlerini temsil edemediği için hatası yanlılıktan (bias) gelir; daha fazla veri bu hatayı azaltmaz. GBT ise 0,752 → 0,794'e çıkıyor: 2 × 254 kategorili bölge özelliğinde nadir bölgeler ancak büyük örneklemde "yaprakta en az 20 kayıt" koşulunu sağlayıp kendi bölmesini alabiliyor.
 - **Tek makinede scikit-learn çok daha hızlı.** GBT'de fark 100K'da ~110×, 5M'de ~40×. Bunun dört nedeni var:
   - Spark'ın her ağaç seviyesi ayrı bir iş (job) olarak zamanlanıyor.

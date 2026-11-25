@@ -120,7 +120,7 @@ src/            ingest, dictionary_stats, build_sizes, benchmark_io, plots_io   
                 fetch_data (temiz veriyi Release'den kurar), mem_probe (tepe bellek)  (ortak)
 notebooks/      01_data_acquisition_and_formats, 02_cleaning_and_anomalies,
                 03_aggregation, 03_aggregation_ders, 04_ml_duration_prediction,
-                05_processing_benchmark
+                04_ml_duration_ders, 05_processing_benchmark, 05_processing_ders
 reports/        results/*.csv (ölçümler ve özetler) · figures/01–23_*.png · dashboard/index.html
 docs/           ROADMAP, data_dictionary, cleaning_rules, technical_report_s1_s2/_s3/_s4/_s5,
                 exam_questions_s1_s2/_s3/_s4/_s5, PROJECT_REQUIREMENTS, architecture.png
@@ -216,7 +216,7 @@ Komut `reports/results/s3_*.csv` tablolarını üretir. Ders notebook’u altı 
 
 ## 9. Öğrenci 4 — ML modeli: Yolculuk Süresi Tahmini
 
-**Notebook:** [`notebooks/04_ml_duration_prediction.ipynb`](notebooks/04_ml_duration_prediction.ipynb) · **Girdi:** 17.210.961 temiz yolculuktan 100K / 1M / 5M örneklem
+**Notebook:** [`notebooks/04_ml_duration_prediction.ipynb`](notebooks/04_ml_duration_prediction.ipynb) · **Ders gösterimi:** [`notebooks/04_ml_duration_ders.ipynb`](notebooks/04_ml_duration_ders.ipynb) · **Girdi:** 17.210.961 temiz yolculuktan 100K / 1M / 5M örneklem
 
 Yolculuk süresi (`trip_duration_min`) için PySpark MLlib (`LinearRegression`, `GBTRegressor`) ve scikit-learn (`LinearRegression`, `HistGradientBoostingRegressor`) **aynı koşullarda** karşılaştırıldı:
 
@@ -241,8 +241,8 @@ Yolculuk süresi (`trip_duration_min`) için PySpark MLlib (`LinearRegression`, 
 | PySpark | GBTRegressor | 5,481 | 0,794 | 197,4 | 4.161 |
 | scikit-learn | HistGradientBoosting | 5,561 | 0,788 | 4,8 | 2.209 |
 
-- **Karşılaştırma adil:** OLS iki çerçevede aynı sonucu veriyor (RMSE farkı ≤ 0,001). Farklar yalnızca algoritma uygulamasından geliyor.
-- **GBT, doğrusal modelden ~%23 daha iyi** (RMSE 7,18 → 5,48). Doğrusal modelin R²'si boyutla sabit kalıyor (0,64–0,65); GBT veri arttıkça iyileşiyor (0,75 → 0,79).
+- **Karşılaştırma adil:** OLS iki çerçevede aynı sonucu veriyor (RMSE farkı ≤ 0,002). Farklar yalnızca algoritma uygulamasından geliyor.
+- **GBT, doğrusal modelden ~%24 daha iyi** (RMSE 7,18 → 5,48). Doğrusal modelin R²'si boyutla sabit kalıyor (0,64–0,65); GBT veri arttıkça iyileşiyor (0,75 → 0,79).
 - **Özellik önemi:** `trip_distance` 0,47 · `DOLocationID` 0,18 · `pickup_hour` 0,14 · `PULocationID` 0,12 · `pickup_dow` 0,07.
 - **Tek makinede klasik yaklaşım daha hızlı:** sklearn GBT 100K'da ~110×, 5M'de ~40× hızlı. Spark'ın iş zamanlama ve serileştirme maliyeti sabittir; veri büyüdükçe payı azalır. Doğrusal modelde ise sıra 1M'de tersine dönüyor: Spark'ın paralel normal denklemi, sklearn'ün tek çekirdekli seyrek `lsqr` çözücüsünü geçiyor.
 - **Bellek:** Spark'ın JVM tabanı (~0,5 GB) var ve GBT'de en fazla belleği o kullanıyor. sklearn belleği kayıtla doğrusal artıyor (~0,4–0,6 KB/kayıt); bu makinede ~55–80M kayıtta RAM dolar.
@@ -261,7 +261,7 @@ Ayrıntılı teknik yorum: [`docs/technical_report_s4.md`](docs/technical_report
 
 ## 10. Öğrenci 5 — İşleme performansı ve dashboard
 
-**Notebook:** [`notebooks/05_processing_benchmark.ipynb`](notebooks/05_processing_benchmark.ipynb) · **Dashboard:** [`reports/dashboard/index.html`](reports/dashboard/index.html) (tarayıcıda açılır; sunucu ve ek kütüphane gerektirmez) · **Girdi:** S1'in boyut setleri (100K … 19M)
+**Notebook:** [`notebooks/05_processing_benchmark.ipynb`](notebooks/05_processing_benchmark.ipynb) · **Ders gösterimi:** [`notebooks/05_processing_ders.ipynb`](notebooks/05_processing_ders.ipynb) · **Dashboard:** [`reports/dashboard/index.html`](reports/dashboard/index.html) (tarayıcıda açılır; sunucu ve ek kütüphane gerektirmez) · **Girdi:** S1'in boyut setleri (100K … 19M)
 
 Öğrenci 1 okumayı ölçtü; burada **işleme** ölçüldü. Üç ileri analitik işlem pandas ve PySpark ile, CSV ve Parquet üzerinde, 5 veri boyutunda karşılaştırıldı:
 
