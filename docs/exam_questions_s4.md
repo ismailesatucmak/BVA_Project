@@ -1,25 +1,33 @@
 # Öğrenci 4 — Sınav Soruları
 
-**1.** Bir PySpark MLlib pipeline'ında `StringIndexer(handleInvalid="keep")` ve `OneHotEncoder` kullanılarak `PULocationID` kolonundaki bölge kodları kodlanmaktadır. Eğitim setinde hiç görülmemiş bir bölge kodu test setinde karşılaşılırsa bu pipeline nasıl davranır?
+**1.** Bir PySpark MLlib pipeline'ında bölge kodları `StringIndexer(handleInvalid="keep")` ve ardından `OneHotEncoder(dropLast=True)` ile kodlanıyor. Test kümesinde, eğitimde hiç görülmemiş bir bölge kodu çıkarsa ne olur?
 
-- A) `NullPointerException` fırlatır ve pipeline durur.
-- B) Bilinmeyen kodu ayrı bir "keep" kategorisi olarak sıfır vektörüyle temsil eder ve pipeline çalışmaya devam eder.
-- C) Bilinmeyen kodu en yüksek frekanslı kategoriye atar.
-- D) Bilinmeyen kodu içeren satırları filtreler ve test setinden siler.
-- E) `StringIndexer` aşamasını atlayarak `OneHotEncoder`'ı doğrudan ham tamsayı üzerinde çalıştırır.
+- A) `StringIndexer` hata fırlatır ve pipeline durur.
+- B) Kod, ek bir "bilinmeyen" indeksine atanır. Bu indeks one-hot'ta düşürülen son kategoriye denk geldiği için satır sıfır vektörüyle temsil edilir ve pipeline çalışmaya devam eder.
+- C) Kod, eğitimde en sık görülen kategoriye atanır.
+- D) O satır test kümesinden sessizce silinir.
+- E) `OneHotEncoder` aşaması atlanır ve ham tamsayı doğrudan modele verilir.
 
-**2.** Yolculuk süresi tahmini için `scikit-learn` ile eğitilen bir `HistGradientBoostingRegressor` modeli 100K ve 1M kayıtta çalışırken 5M kayıtta ~3,13 GB RAM tüketmektedir; veri büyüklüğü makinenin fiziksel RAM sınırını aştığında (ör. tam 17,2M+ kayıt veya düşük bellekli bir ortam) süreç bellek hatasıyla (OOM) çökmektedir. Aynı donanımda PySpark `GBTRegressor` ise JVM belleği dolduğunda bile diske yazarak (spill) eğitimi tamamlamaktadır. Bu davranışın temel teknik açıklaması hangisidir?
+**2.** Aynı 5M kayıtlık örneklemde, aynı train/test ayrımı, aynı özellikler ve aynı hiperparametrelerle (50 ağaç, derinlik 5) iki ölçüm yapılıyor. scikit-learn `HistGradientBoostingRegressor` 4,8 sn sürüyor ve 2,2 GB tepe bellek kullanıyor. PySpark `GBTRegressor` (`local[*]`, tek makine) 197 sn sürüyor ve süreç ağacının tepe belleği 4,2 GB. Bu sonucun en doğru yorumu hangisidir?
 
-- A) scikit-learn'ün gradyan artırma algoritması PySpark'ınkinden matematiksel olarak daha karmaşıktır, bu yüzden daha yavaştır.
-- B) scikit-learn tüm veriyi aynı anda ana belleğe (RAM) yükler ve RAM dolduğunda çöker; PySpark ise veriyi bölümler hâlinde (partition) disk ve bellek arasında yöneterek RAM sınırını aşabilir.
-- C) PySpark modelleri scikit-learn modellerinden çok daha küçük ağaçlar öğrenir, bu yüzden daha az bellek kullanır.
-- D) scikit-learn paralel işlemeyi desteklemez; PySpark ise birden fazla çekirdek kullandığından bellek sorunu yaşamaz.
-- E) 5M kayıt scikit-learn için makul olmayan bir veri büyüklüğüdür; bu yüzden scikit-learn'ün sağladığı fonksiyonlar bu kadar büyük veriyle çağrılamaz.
+- A) PySpark'ın gradyan artırma algoritması matematiksel olarak daha karmaşık olduğu için yavaştır; büyük veride de her zaman yavaş kalır.
+- B) Ölçüm hatalıdır. Spark yalnızca Python sürücüsü üzerinden ölçülmeli; o zaman Spark'ın belleği çok daha düşük çıkar.
+- C) Veri RAM'e sığdığı sürece tek makinede sklearn'ün yerel (C++/Cython) çok iş parçacıklı uygulaması, Spark'ın iş zamanlama, JVM↔Python serileştirme ve görev başına sabit maliyetlerinden kurtulduğu için daha hızlıdır. Spark'ın JVM'i de sabit bir bellek tabanı ekler. Spark'ın getirisi veri tek makinenin RAM'ini aştığında veya küme gerektiğinde ortaya çıkar.
+- D) scikit-learn veriyi diske taşıyarak (spill) çalıştığı için daha az bellek kullanır.
+- E) 5M kayıt büyük veri sayılmadığı için Spark bu boyutta çalışamaz ve sonuçları güvenilir değildir.
 
 ---
 
 **Cevaplar.**
 
-**1 — B.** `handleInvalid="keep"` parametresi sayesinde `StringIndexer`, bilinmeyen değerleri `numLabels` indeksine (eğitimde görülen en son indeksin bir fazlası) atar. `OneHotEncoder` bu indeksi sıfır vektörüyle kodlar; böylece pipeline çökmez, bilinmeyen bölge "hiçbir kategoriye ait değil" olarak temsil edilir. Seçenek A yanlış: `handleInvalid="error"` (varsayılan) hata fırlatır ama biz açıkça "keep" seçtik. Seçenek C yanlış: en yüksek frekanslı kategoriye atama `handleInvalid="skip"` değil, hiçbir seçenekte yoktur. Seçenek D, E yanlış: pipeline satır filtrelemez ve aşama atlamaz.
+**1 — B.** `handleInvalid="keep"` ile `StringIndexer` bilinmeyen değeri `numLabels` indeksine atar. Bu, bilinen etiketlerden sonraki ek bir kategoridir. `OneHotEncoder` varsayılan olarak `dropLast=True` ile son kategoriyi düşürdüğü için bu satır sıfır vektörüyle kodlanır, yani "hiçbir bilinen bölgeye ait değil" anlamına gelir.
+- A yanlış: hata fırlatmak varsayılan `handleInvalid="error"` davranışıdır.
+- C yanlış: en sık kategoriye atama yapan bir seçenek yoktur.
+- D yanlış: satır silmek `handleInvalid="skip"` davranışıdır.
+- E yanlış: pipeline aşamaları atlanmaz.
 
-**2 — B.** scikit-learn tek makinede tüm veriyi RAM'e yükleyerek çalışır; veri RAM'e sığmadığında süreç bellek hatası verir ya da swap nedeniyle çok yavaşlar. PySpark, veriyi partition'lara bölerek disk tabanlı spill mekanizmasıyla RAM'den büyük veri setlerini işleyebilir. Seçenek A yanlış: her iki kütüphane de GBT türevi algoritmalar kullanır, matematiksel karmaşıklık farkı performans sınırını belirlemez. Seçenek C yanlış: ağaç derinliği ve sayısı bağımsız hiperparametredir. Seçenek D yanlış: scikit-learn `n_jobs=-1` ile paralel işleme destekler ama bu RAM sınırını kaldırmaz. Seçenek E yanlış: teknik bir kısıt değil, sadece yanlış bir genellemedir; scikit-learn çağrılabilir ama bellek tükenebilir.
+**2 — C.** Bu proje ölçümünde iki çerçeve aynı satırları, özellikleri ve ayarları kullandı. Doğrulukları da çok yakın çıktı (RMSE 5,48 vs 5,56 dk). Süre farkı Spark'ın dağıtık çalışma ek yükünden geliyor: her ağaç seviyesi ayrı bir iş olarak zamanlanıyor, histogramlar shuffle ile birleştiriliyor ve veri JVM ile Python arasında serileştiriliyor. Bu ek yükün göreli payı veri büyüdükçe azalıyor (100K'da ~110×, 5M'de ~40×).
+- A yanlış: iki uygulama da histogram tabanlı gradyan artırmadır. Fark algoritmadan değil çalışma ortamından gelir.
+- B yanlış: işi JVM yapar. Yalnızca Python sürecini ölçmek belleği gizler; projenin ilk sürümündeki hata buydu.
+- D yanlış: sklearn diske taşma (spill) yapmaz, tüm veriyi RAM'de tutar.
+- E yanlış: Spark her boyutta doğru çalıştı. Soru performansla ilgili, doğrulukla değil.

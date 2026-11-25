@@ -1,7 +1,0 @@
-framework,model,size_label,size_n,rmse,mae,r2,train_time_s,predict_time_s,peak_ram_mb
-PySpark,LinearRegression,100K,100000,7.1924,4.9083,0.6467,4.04,0.5,72.1
-PySpark,GBTRegressor,100K,100000,6.2407,4.1061,0.734,10.74,0.34,72.3
-PySpark,LinearRegression,1M,1000000,7.1871,4.937,0.6487,5.19,2.04,72.4
-PySpark,GBTRegressor,1M,1000000,6.2729,4.1399,0.7324,61.93,0.86,72.4
-PySpark,LinearRegression,5M,5000000,7.1933,4.9254,0.6459,18.1,7.84,72.3
-PySpark,GBTRegressor,5M,5000000,6.2842,4.1415,0.7297,1303.91,4.25,72.4

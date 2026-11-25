@@ -1,7 +1,0 @@
-framework,model,size_n,rmse,mae,r2,train_time_s,predict_time_s,peak_ram_mb,error
-scikit-learn,Ridge,100000,7.334,5.1205,0.626,0.01,0.0004,2441.7,
-scikit-learn,HistGradientBoosting,100000,5.9556,3.904,0.7534,0.25,0.0292,2443.3,
-scikit-learn,Ridge,1000000,7.4,5.1281,0.6276,0.04,0.0042,2540.7,
-scikit-learn,HistGradientBoosting,1000000,5.9275,3.8755,0.7611,1.93,0.3199,2545.9,
-scikit-learn,Ridge,5000000,7.4119,5.1396,0.6261,0.23,0.0136,3124.6,
-scikit-learn,HistGradientBoosting,5000000,5.9263,3.8849,0.761,12.16,1.5821,3132.2,

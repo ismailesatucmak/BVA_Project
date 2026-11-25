@@ -1,32 +1,47 @@
-"""NYC Taxi yolculuk süresi tahmini — PySpark MLlib pipeline.
+"""NYC Taxi yolculuk süresi tahmini — PySpark MLlib vs scikit-learn (Öğrenci 4).
 
-Öğrenci 4 görevi:
-  - LinearRegression (baseline) ve GBTRegressor ile yolculuk süresini tahmin et.
-  - 100K, 1M, 5M kayıtlık alt örneklemlerde eğitim/değerlendirme yap.
-  - Scikit-learn (Ridge, HistGradientBoostingRegressor) ile hız/bellek kıyaslaması yap.
-  - Tüm sonuçları reports/results/s4_*.csv'e, grafikleri reports/figures/18-20_s4_*.png'e kaydet.
+Deney tasarımı (adil karşılaştırma):
+  * Örneklem: temiz veriden 100K / 1M / 5M kayıt, S1'in xxhash64 anahtarıyla
+    (``build_sizes.with_sample_key``) → makineden bağımsız ve iç içe (100K ⊂ 1M ⊂ 5M).
+  * Train/test ayrımı da satır hash'iyle yapılır (%80 / %20) ve örneklemle birlikte
+    diske yazılır → PySpark ve scikit-learn **aynı satırlarda** eğitilir ve test edilir.
+  * Özellikler iki tarafta aynıdır: 8 sayısal kolon + biniş/iniş bölgesi.
+    Bölge kodlaması yalnızca eğitim kümesinden öğrenilir: en sık 254 bölge 0..253,
+    geri kalan / görülmemiş bölgeler 254 ("diğer"). 255 kod, scikit-learn
+    HistGradientBoosting'in kategorik sınırına (≤ 255) uyar.
+      - Doğrusal modeller: bölge kodu one-hot (son kategori düşürülür) — iki tarafta aynı matris.
+      - Ağaç modelleri: bölge kodu kategorik özellik (Spark: nominal metadata, maxBins=256;
+        sklearn: ``categorical_features``).
+  * Hiperparametreler eşittir: OLS (düzenlileştirme yok); GBT 50 ağaç, derinlik 5,
+    öğrenme oranı 0,1, yaprakta en az 20 kayıt, erken durdurma yok.
+  * Her (çerçeve × boyut × model) ayrı bir alt süreçte ölçülür. Bellek, süreç ağacının
+    (Python + Spark JVM + Python işçileri) tepe RSS'idir (``src.mem_probe.PeakRSS``),
+    eğitim sırasında 50 ms aralıkla örneklenir. Veri yükleme süreye dahil değildir.
 
 Kural: Spark oturumu her zaman get_spark() ile açılır.
 Kural: Türetilmiş kolonlar (trip_duration_min, pickup_hour, pickup_dow) quality.py'den gelir.
-Kural: Flex Fare kayıtlarında null olan kolonları (passenger_count, RatecodeID vb.) feature olarak kullanma.
+Kural: Flex Fare kayıtlarında null olan kolonlar (passenger_count, RatecodeID vb.) feature olmaz.
 Kural: fare_amount, total_amount, tip_amount, tpep_dropoff_datetime data leakage nedeniyle dışlanır.
+
+Çalıştırma:
+    python -m src.ml_duration                 # örneklemler + 12 ölçüm + grafikler
+    python -m src.ml_duration --sizes 100K 1M # yalnızca seçilen boyutlar
+    python -m src.ml_duration --plots-only    # kayıtlı CSV'lerden grafikler (Spark gerekmez)
 """
 
 from __future__ import annotations
 
+import argparse
+import csv
+import json
 import logging
 import subprocess
 import sys
 import time
 from pathlib import Path
 
-import psutil
+from src.config import CLEAN_DIR, EXTERNAL_DATA_ROOT, FIGURES_DIR, RESULTS_DIR
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-RESULTS_DIR = PROJECT_ROOT / "reports" / "results"
-FIGURES_DIR = PROJECT_ROOT / "reports" / "figures"
-
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [S4] %(message)s")
 log = logging.getLogger(__name__)
 
 # ------------------------------------------------------------------
@@ -38,11 +53,14 @@ SAMPLE_SEED = 42
 TARGET_COL = "trip_duration_min"
 TRAIN_RATIO = 0.8
 TEST_RATIO = 0.2
+SPLIT_COL = "is_train"
 
 # Features: null içermeyen ve data leakage olmayan kolonlar
 # passenger_count, RatecodeID, congestion_surcharge, Airport_fee → Flex Fare'de null, dışla
 # fare_amount, total_amount, tip_amount → data leakage
 # tpep_dropoff_datetime → data leakage (target'tan türetiliyor)
+# Not: tolls_amount ve cbd_congestion_fee rota bilgisi taşır ve yolculuk sonunda kesinleşir;
+# gerçek zamanlı (biniş anında) tahminde bilinmezler → raporda sınırlama olarak belirtilir.
 NUMERIC_FEATURES = [
     "trip_distance",
     "pickup_hour",
@@ -53,733 +71,550 @@ NUMERIC_FEATURES = [
     "improvement_surcharge",
     "cbd_congestion_fee",
 ]
-CATEGORICAL_FEATURES = ["PULocationID", "DOLocationID"]  # StringIndexer + OHE
+LOCATION_COLS = ["PULocationID", "DOLocationID"]
+CATEGORICAL_FEATURES = ["PU_code", "DO_code"]  # LOCATION_COLS'un kodlanmış hâli
+N_LOCATION_CODES = 255  # sklearn HistGradientBoosting kategorik sınırı
+OTHER_CODE = N_LOCATION_CODES - 1  # nadir / eğitimde görülmemiş bölge
+
+# Model hiperparametreleri (iki çerçevede aynı)
+LR_MAX_ITER = 100
+GBT_MAX_ITER = 50
+GBT_MAX_DEPTH = 5
+GBT_LEARNING_RATE = 0.1
+GBT_MIN_LEAF = 20
+GBT_MAX_BINS = 256  # Spark: ≥ kategori sayısı (255) olmalı
+
+# (çerçeve, model anahtarı, rapordaki model adı)
+EXPERIMENTS = [
+    ("PySpark", "lr", "LinearRegression"),
+    ("PySpark", "gbt", "GBTRegressor"),
+    ("scikit-learn", "lr", "LinearRegression"),
+    ("scikit-learn", "gbt", "HistGradientBoosting"),
+]
+WORKER_TIMEOUT_S = 3 * 3600
+FEATURE_IMPORTANCE_SIZE = "1M"  # özellik önemi + tahmin örneği bu boyuttaki Spark GBT'den
+PRED_SAMPLE_ROWS = 5_000
+
+SAMPLES_DIR = EXTERNAL_DATA_ROOT / "s4_samples"
+COMPARISON_CSV = RESULTS_DIR / "s4_comparison.csv"
+IMPORTANCE_CSV = RESULTS_DIR / "s4_feature_importance.csv"
+PRED_SAMPLE_CSV = RESULTS_DIR / "s4_pred_sample.csv"
+
+RESULT_FIELDS = [
+    "framework", "model", "size_label", "size_n", "n_train", "n_test",
+    "rmse", "mae", "r2", "train_time_s", "predict_time_s",
+    "rss_before_fit_mb", "peak_rss_mb", "peak_jvm_mb", "error",
+]
+
+
+def _model_name(framework: str, model_type: str) -> str:
+    for fw, key, name in EXPERIMENTS:
+        if fw == framework and key == model_type:
+            return name
+    raise ValueError(f"Bilinmeyen deney: {framework}/{model_type}")
 
 
 # ------------------------------------------------------------------
-# PySpark Pipeline
+# Örnekleme, ayrım ve bölge kodlaması (Spark)
 # ------------------------------------------------------------------
 
-def _build_pipeline(model_type: str = "lr"):
-    """LinearRegression (lr) veya GBTRegressor (gbt) içeren ML pipeline döndürür."""
-    from pyspark.ml import Pipeline
-    from pyspark.ml.feature import OneHotEncoder, StringIndexer, VectorAssembler
-    from pyspark.ml.regression import GBTRegressor, LinearRegression
+def _sample_data(df, n: int):
+    """~n kayıtlık, makineden bağımsız ve iç içe örneklem (S1'in hash anahtarı)."""
+    from src.build_sizes import sample_threshold, select_size, with_sample_key
 
-    stages = []
-
-    # 1) Kategorik kolonlar: StringIndexer → OneHotEncoder
-    indexed_cols = []
-    for col in CATEGORICAL_FEATURES:
-        idx_col = f"{col}_idx"
-        ohe_col = f"{col}_ohe"
-        indexer = StringIndexer(
-            inputCol=col,
-            outputCol=idx_col,
-            handleInvalid="keep",  # null/bilinmeyen → "keep" kategorisi
-        )
-        encoder = OneHotEncoder(inputCol=idx_col, outputCol=ohe_col, handleInvalid="keep")
-        stages.extend([indexer, encoder])
-        indexed_cols.append(ohe_col)
-
-    # 2) Tüm özellikleri birleştir
-    all_features = NUMERIC_FEATURES + indexed_cols
-    assembler = VectorAssembler(
-        inputCols=all_features,
-        outputCol="features",
-        handleInvalid="keep",
-    )
-    stages.append(assembler)
-
-    # 3) Model
-    if model_type == "lr":
-        model = LinearRegression(
-            featuresCol="features",
-            labelCol=TARGET_COL,
-            predictionCol="prediction",
-            maxIter=100,
-        )
-    elif model_type == "gbt":
-        model = GBTRegressor(
-            featuresCol="features",
-            labelCol=TARGET_COL,
-            predictionCol="prediction",
-            maxIter=15,
-            maxDepth=5,
-            seed=SAMPLE_SEED,
-        )
-    else:
-        raise ValueError(f"Bilinmeyen model tipi: {model_type}")
-
-    stages.append(model)
-    return Pipeline(stages=stages)
-
-
-def _sample_data(df, n: int, seed: int = SAMPLE_SEED):
-    """Tekrarlanabilir alt örnekleme.
-
-    PySpark'ın dahili randomSplit / sample yöntemi seed verilerek deterministik çalışır.
-    build_sizes.py'deki xxhash64 yaklaşımı ⊂ ilişkisi için kullanılır; burada
-    sıralama garantisi gerekmiyor, sadece tekrarlanabilirlik yeterli.
-    """
     total = df.count()
     if n >= total:
         return df
-    frac = min(n / total * 1.05, 1.0)  # %5 marj — count() ile kesin boyut sağlanır
-    return df.sample(withReplacement=False, fraction=frac, seed=seed).limit(n)
+    return select_size(with_sample_key(df), sample_threshold(n, total))
 
 
-def _evaluate(predictions):
-    """RMSE, MAE, R² hesapla ve dict döndür."""
+def _add_split(df):
+    """Satır içeriğinin hash'iyle deterministik train/test bayrağı ekler."""
+    from pyspark.sql import functions as F
+
+    row_hash = F.xxhash64(F.lit("train_test_split"), *[F.col(c) for c in df.columns])
+    key = F.pmod(row_hash, F.lit(10**9)) / F.lit(10**9)
+    return df.withColumn(SPLIT_COL, key < F.lit(TRAIN_RATIO))
+
+
+def fit_location_codes(train_df) -> dict[str, dict[int, int]]:
+    """Her bölge kolonu için eğitimdeki en sık OTHER_CODE bölgeye 0..OTHER_CODE-1 kodu verir."""
+    from pyspark.sql import functions as F
+
+    mapping = {}
+    for col in LOCATION_COLS:
+        rows = (
+            train_df.groupBy(col).count()
+            .orderBy(F.desc("count"), F.asc(col))
+            .limit(OTHER_CODE)
+            .collect()
+        )
+        mapping[col] = {int(r[col]): i for i, r in enumerate(rows)}
+    return mapping
+
+
+def with_nominal_metadata(df):
+    """Kod kolonlarını double + nominal (255 değerli) metadata ile işaretler.
+
+    VectorAssembler bu metadata'yı vektöre taşır: ağaç modelleri kolonu kategorik görür,
+    OneHotEncoder her zaman 255 kategori (son kategori düşürülür → 254 kolon) üretir.
+    """
+    from pyspark.sql import functions as F
+
+    def meta(name):
+        return {"ml_attr": {"type": "nominal", "num_vals": N_LOCATION_CODES, "name": name}}
+
+    others = [c for c in df.columns if c not in CATEGORICAL_FEATURES]
+    return df.select(
+        *others,
+        *[F.col(c).cast("double").alias(c, metadata=meta(c)) for c in CATEGORICAL_FEATURES],
+    )
+
+
+def apply_location_codes(df, mapping: dict[str, dict[int, int]]):
+    """Bölge ID'lerini 0..OTHER_CODE koduna çevirir (eşlenmeyen → OTHER_CODE)."""
+    from pyspark.sql import functions as F
+
+    for col, code_col in zip(LOCATION_COLS, CATEGORICAL_FEATURES):
+        pairs = [F.lit(x) for kv in sorted(mapping[col].items()) for x in kv]
+        if pairs:
+            code = F.coalesce(F.create_map(*pairs)[F.col(col)], F.lit(OTHER_CODE))
+        else:
+            code = F.lit(OTHER_CODE)
+        df = df.withColumn(code_col, code.cast("int"))
+    return with_nominal_metadata(df)
+
+
+def prepare_sample(df_clean, size_label: str, size_n: int, force: bool = False) -> Path:
+    """Örneklemi üretir, ayırır, bölgeleri kodlar ve tek Parquet dosyası olarak yazar."""
+    out_dir = SAMPLES_DIR / size_label
+    if (out_dir / "_SUCCESS").exists() and not force:
+        log.info("  örneklem mevcut: %s", out_dir)
+        return out_dir
+
+    sample = _sample_data(df_clean, size_n)
+    sample = _add_split(sample).select(
+        [TARGET_COL] + NUMERIC_FEATURES + LOCATION_COLS + [SPLIT_COL]
+    )
+    sample.cache()
+    mapping = fit_location_codes(sample.filter(sample[SPLIT_COL]))
+    coded = apply_location_codes(sample, mapping)
+    coded.coalesce(1).write.mode("overwrite").parquet(str(out_dir))
+    sample.unpersist()
+    return out_dir
+
+
+# ------------------------------------------------------------------
+# PySpark pipeline
+# ------------------------------------------------------------------
+
+def _build_pipeline(model_type: str = "lr"):
+    """LinearRegression (lr) veya GBTRegressor (gbt) pipeline'ı.
+
+    Girdi: NUMERIC_FEATURES + CATEGORICAL_FEATURES (nominal metadata'lı, bkz.
+    ``apply_location_codes``).
+    """
+    from pyspark.ml import Pipeline
+    from pyspark.ml.feature import OneHotEncoder, VectorAssembler
+    from pyspark.ml.regression import GBTRegressor, LinearRegression
+
+    if model_type == "lr":
+        ohe_cols = [f"{c}_ohe" for c in CATEGORICAL_FEATURES]
+        encoder = OneHotEncoder(inputCols=CATEGORICAL_FEATURES, outputCols=ohe_cols, dropLast=True)
+        assembler = VectorAssembler(inputCols=NUMERIC_FEATURES + ohe_cols, outputCol="features")
+        model = LinearRegression(
+            featuresCol="features", labelCol=TARGET_COL, predictionCol="prediction",
+            maxIter=LR_MAX_ITER, regParam=0.0,
+        )
+        return Pipeline(stages=[encoder, assembler, model])
+    if model_type == "gbt":
+        assembler = VectorAssembler(
+            inputCols=NUMERIC_FEATURES + CATEGORICAL_FEATURES, outputCol="features"
+        )
+        model = GBTRegressor(
+            featuresCol="features", labelCol=TARGET_COL, predictionCol="prediction",
+            maxIter=GBT_MAX_ITER, maxDepth=GBT_MAX_DEPTH, stepSize=GBT_LEARNING_RATE,
+            minInstancesPerNode=GBT_MIN_LEAF, maxBins=GBT_MAX_BINS, seed=SAMPLE_SEED,
+        )
+        return Pipeline(stages=[assembler, model])
+    raise ValueError(f"Bilinmeyen model tipi: {model_type}")
+
+
+def _evaluate(predictions) -> dict[str, float]:
+    """RMSE, MAE, R² (Spark)."""
     from pyspark.ml.evaluation import RegressionEvaluator
 
-    metrics = {}
-    for metric in ("rmse", "mae", "r2"):
-        evaluator = RegressionEvaluator(
-            labelCol=TARGET_COL,
-            predictionCol="prediction",
-            metricName=metric,
+    return {
+        m: RegressionEvaluator(
+            labelCol=TARGET_COL, predictionCol="prediction", metricName=m
+        ).evaluate(predictions)
+        for m in ("rmse", "mae", "r2")
+    }
+
+
+def feature_names() -> list[str]:
+    """GBT özellik vektöründeki sıra: sayısallar + bölge kolonları (kategorik)."""
+    return NUMERIC_FEATURES + LOCATION_COLS
+
+
+# ------------------------------------------------------------------
+# scikit-learn modelleri (aynı özellikler, aynı hiperparametreler)
+# ------------------------------------------------------------------
+
+def build_sklearn_model(model_type: str):
+    """scikit-learn karşılığı: lr → one-hot + OLS, gbt → HistGradientBoosting (kategorik)."""
+    from sklearn.compose import ColumnTransformer
+    from sklearn.ensemble import HistGradientBoostingRegressor
+    from sklearn.linear_model import LinearRegression
+    from sklearn.pipeline import Pipeline
+    from sklearn.preprocessing import OneHotEncoder
+
+    if model_type == "lr":
+        codes = list(range(N_LOCATION_CODES))
+        encoder = OneHotEncoder(
+            categories=[codes] * len(CATEGORICAL_FEATURES),
+            drop=[OTHER_CODE] * len(CATEGORICAL_FEATURES),  # Spark dropLast ile aynı
+            sparse_output=True,
         )
-        metrics[metric] = evaluator.evaluate(predictions)
-    return metrics
-
-
-def _ram_mb() -> float:
-    """Mevcut Python sürecinin bellek kullanımını MB olarak döndür."""
-    return psutil.Process().memory_info().rss / 1024 / 1024
-
-
-def run_spark_experiments(spark, df_clean):
-    """Her boyut × model kombinasyonu için PySpark deneyleri çalıştır.
-
-    Returns:
-        list[dict] — Her satır bir deney sonucu.
-    """
-    results = []
-
-    for size_label, size_n in zip(SAMPLE_LABELS, SAMPLE_SIZES):
-        log.info(f"=== Alt örneklem: {size_label} ({size_n:,} kayıt) ===")
-
-        # Sadece gerekli kolonları seç (Flex Fare null kolonlarından kaçın)
-        needed_cols = (
-            [TARGET_COL]
-            + NUMERIC_FEATURES
-            + CATEGORICAL_FEATURES
-            + ["is_flex_fare"]
+        pre = ColumnTransformer(
+            [("num", "passthrough", NUMERIC_FEATURES), ("loc", encoder, CATEGORICAL_FEATURES)]
         )
-        df_sel = df_clean.select(needed_cols).filter(
-            # Target null olmamalı
-            (df_clean[TARGET_COL].isNotNull())
-            # Uzak uç değerleri filtrele (quality.py garantileri: 1 < süre ≤ 180)
-            & (df_clean[TARGET_COL] > 0)
+        return Pipeline([("pre", pre), ("model", LinearRegression())])
+    if model_type == "gbt":
+        n_num = len(NUMERIC_FEATURES)
+        return HistGradientBoostingRegressor(
+            max_iter=GBT_MAX_ITER,
+            max_depth=GBT_MAX_DEPTH,
+            learning_rate=GBT_LEARNING_RATE,
+            min_samples_leaf=GBT_MIN_LEAF,
+            max_leaf_nodes=None,
+            max_bins=N_LOCATION_CODES,
+            categorical_features=[n_num + i for i in range(len(CATEGORICAL_FEATURES))],
+            early_stopping=False,
+            random_state=SAMPLE_SEED,
         )
+    raise ValueError(f"Bilinmeyen model tipi: {model_type}")
 
-        df_sample = _sample_data(df_sel, size_n)
-        df_sample.cache()
-        actual_n = df_sample.count()
-        log.info(f"  Örneklem boyutu (gerçek): {actual_n:,}")
 
-        train_df, test_df = df_sample.randomSplit(
-            [TRAIN_RATIO, TEST_RATIO], seed=SAMPLE_SEED
-        )
-        train_df.cache()
-        test_df.cache()
+def sklearn_metrics(y_true, y_pred) -> dict[str, float]:
+    import numpy as np
+    from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 
-        for model_label, model_type in [("LinearRegression", "lr"), ("GBTRegressor", "gbt")]:
-            log.info(f"  Model: {model_label}")
-            pipeline = _build_pipeline(model_type)
+    return {
+        "rmse": float(np.sqrt(mean_squared_error(y_true, y_pred))),
+        "mae": float(mean_absolute_error(y_true, y_pred)),
+        "r2": float(r2_score(y_true, y_pred)),
+    }
 
-            # Eğitim
-            ram_before = _ram_mb()
+
+# ------------------------------------------------------------------
+# Alt süreç işçileri (tek ölçüm = tek süreç)
+# ------------------------------------------------------------------
+
+def _result_row(framework, model_type, size_label, n_train, n_test, metrics,
+                train_time, predict_time, probe) -> dict:
+    return {
+        "framework": framework,
+        "model": _model_name(framework, model_type),
+        "size_label": size_label,
+        "size_n": n_train + n_test,
+        "n_train": n_train,
+        "n_test": n_test,
+        "rmse": round(metrics["rmse"], 4),
+        "mae": round(metrics["mae"], 4),
+        "r2": round(metrics["r2"], 4),
+        "train_time_s": round(train_time, 3),
+        "predict_time_s": round(predict_time, 3),
+        "rss_before_fit_mb": round(probe.start_total_mb, 1),
+        "peak_rss_mb": round(probe.peak_total_mb, 1),
+        "peak_jvm_mb": round(probe.peak_jvm_mb, 1) if framework == "PySpark" else "",
+        "error": "",
+    }
+
+
+def run_spark_worker(sample_dir: Path, size_label: str, model_type: str) -> dict:
+    from pyspark.sql import functions as F
+
+    from src.mem_probe import PeakRSS
+    from src.spark_session import get_spark
+
+    spark = get_spark(app_name=f"s4-{model_type}-{size_label}")
+    try:
+        df = with_nominal_metadata(spark.read.parquet(str(sample_dir)))
+        train = df.filter(F.col(SPLIT_COL)).drop(SPLIT_COL).cache()
+        test = df.filter(~F.col(SPLIT_COL)).drop(SPLIT_COL).cache()
+        n_train, n_test = train.count(), test.count()  # veri yükleme ölçüme dahil değil
+
+        pipeline = _build_pipeline(model_type)
+        with PeakRSS() as probe:
             t0 = time.perf_counter()
-            pipeline_model = pipeline.fit(train_df)
+            fitted = pipeline.fit(train)
             train_time = time.perf_counter() - t0
-            ram_peak = max(_ram_mb(), ram_before)
 
-            # Tahmin
             t1 = time.perf_counter()
-            predictions = pipeline_model.transform(test_df)
-            predictions.cache()
-            predictions.count()  # materialization
+            preds = fitted.transform(test).cache()
+            preds.count()
             predict_time = time.perf_counter() - t1
 
-            # Değerlendirme
-            metrics = _evaluate(predictions)
+        metrics = _evaluate(preds)
+        row = _result_row("PySpark", model_type, size_label, n_train, n_test, metrics,
+                          train_time, predict_time, probe)
 
-            row = {
-                "framework": "PySpark",
-                "model": model_label,
-                "size_label": size_label,
-                "size_n": actual_n,
-                "rmse": round(metrics["rmse"], 4),
-                "mae": round(metrics["mae"], 4),
-                "r2": round(metrics["r2"], 4),
-                "train_time_s": round(train_time, 2),
-                "predict_time_s": round(predict_time, 2),
-                "peak_ram_mb": round(ram_peak, 1),
-            }
-            results.append(row)
-            log.info(f"    RMSE={metrics['rmse']:.3f}, R²={metrics['r2']:.3f}, eğitim={train_time:.1f}s")
-
-            predictions.unpersist()
-
-        train_df.unpersist()
-        test_df.unpersist()
-        df_sample.unpersist()
-
-    return results
-
-
-def _sklearn_worker_script(size_n: int, parquet_path: str, out_csv: str) -> str:
-    """Ayrı subprocess'te çalışacak scikit-learn kıyaslama scripti (string olarak döner)."""
-    return f'''
-import sys, time, traceback, csv, os
-import pandas as pd
-import numpy as np
-import psutil
-
-def ram_mb():
-    return psutil.Process().memory_info().rss / 1024 / 1024
-
-TARGET = "trip_duration_min"
-NUMERIC_FEATURES = {NUMERIC_FEATURES!r}
-SIZE_N = {size_n}
-PARQUET_PATH = {parquet_path!r}
-OUT_CSV = {out_csv!r}
-SEED = {SAMPLE_SEED}
-
-try:
-    # Veriyi oku
-    t0 = time.perf_counter()
-    df = pd.read_parquet(PARQUET_PATH, columns=NUMERIC_FEATURES + [TARGET])
-    df = df.dropna(subset=[TARGET])
-    df[NUMERIC_FEATURES] = df[NUMERIC_FEATURES].fillna(0)
-
-    total = len(df)
-    if SIZE_N < total:
-        df = df.sample(n=SIZE_N, random_state=SEED)
-
-    actual_n = len(df)
-    X = df[NUMERIC_FEATURES].values.astype(np.float64)
-    y = df[TARGET].values
-
-    split = int(len(X) * 0.8)
-    X_train, X_test = X[:split], X[split:]
-    y_train, y_test = y[:split], y[split:]
-
-    from sklearn.linear_model import Ridge
-    from sklearn.ensemble import HistGradientBoostingRegressor
-    from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
-
-    rows = []
-    for model_name, model in [
-        ("Ridge", Ridge(alpha=1.0)),
-        ("HistGradientBoosting", HistGradientBoostingRegressor(max_iter=100, max_depth=5, random_state=SEED))
-    ]:
-        ram_before = ram_mb()
-        t_train = time.perf_counter()
-        model.fit(X_train, y_train)
-        train_time = time.perf_counter() - t_train
-        ram_peak = max(ram_mb(), ram_before)
-
-        t_pred = time.perf_counter()
-        y_pred = model.predict(X_test)
-        predict_time = time.perf_counter() - t_pred
-
-        rmse = float(np.sqrt(mean_squared_error(y_test, y_pred)))
-        mae = float(mean_absolute_error(y_test, y_pred))
-        r2 = float(r2_score(y_test, y_pred))
-
-        rows.append({{
-            "framework": "scikit-learn",
-            "model": model_name,
-            "size_n": actual_n,
-            "rmse": round(rmse, 4),
-            "mae": round(mae, 4),
-            "r2": round(r2, 4),
-            "train_time_s": round(train_time, 2),
-            "predict_time_s": round(predict_time, 4),
-            "peak_ram_mb": round(ram_peak, 1),
-            "error": "",
-        }})
-        print(f"[sklearn] {{model_name}} n={{actual_n:,}} RMSE={{rmse:.3f}} R2={{r2:.3f}} train={{train_time:.1f}}s", flush=True)
-
-    # CSV'ye yaz (append modu)
-    file_exists = os.path.exists(OUT_CSV)
-    with open(OUT_CSV, "a", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
-        if not file_exists:
-            writer.writeheader()
-        writer.writerows(rows)
-
-    sys.exit(0)
-
-except Exception as e:
-    # Hataları da CSV'ye yaz
-    import csv, os
-    err_msg = traceback.format_exc()
-    print(f"HATA: {{err_msg}}", file=sys.stderr)
-    file_exists = os.path.exists(OUT_CSV)
-    with open(OUT_CSV, "a", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=["framework","model","size_n","rmse","mae","r2","train_time_s","predict_time_s","peak_ram_mb","error"])
-        if not file_exists:
-            writer.writeheader()
-        writer.writerow({{
-            "framework": "scikit-learn", "model": "HATA", "size_n": SIZE_N,
-            "rmse": None, "mae": None, "r2": None,
-            "train_time_s": None, "predict_time_s": None, "peak_ram_mb": None,
-            "error": str(e)[:500],
-        }})
-    sys.exit(1)
-'''
-
-
-def run_sklearn_comparison(parquet_glob_path: str) -> list[dict]:
-    """Scikit-learn kıyaslamasını ayrı subprocess'lerde çalıştır (ana süreci çöküşten koru)."""
-    import csv
-    import tempfile
-
-    sklearn_csv = str(RESULTS_DIR / "s4_sklearn_comparison.csv")
-
-    # Önceki sonuçları temizle
-    Path(sklearn_csv).unlink(missing_ok=True)
-
-    all_rows = []
-    for size_n, size_label in zip(SAMPLE_SIZES, SAMPLE_LABELS):
-        log.info(f"  scikit-learn kıyaslaması: {size_label}")
-
-        script_code = _sklearn_worker_script(size_n, parquet_glob_path, sklearn_csv)
-
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".py", delete=False, encoding="utf-8"
-        ) as f:
-            f.write(script_code)
-            script_path = f.name
-
-        try:
-            proc = subprocess.run(
-                [sys.executable, script_path],
-                capture_output=True,
-                text=True,
-                timeout=600,  # 5M satırda zaman aşımı koruması
+        if model_type == "gbt" and size_label == FEATURE_IMPORTANCE_SIZE:
+            _save_importance(fitted.stages[-1].featureImportances.toArray())
+            # deterministik, sıralamadan bağımsız örnek (hash sırasıyla ilk N test kaydı)
+            pdf = (
+                preds.select(TARGET_COL, "prediction")
+                .withColumn("_k", F.xxhash64(TARGET_COL, "prediction"))
+                .orderBy("_k")
+                .limit(PRED_SAMPLE_ROWS)
+                .drop("_k")
+                .toPandas()
             )
-            if proc.stdout:
-                log.info(f"  stdout: {proc.stdout.strip()}")
-            if proc.returncode != 0:
-                log.warning(f"  subprocess hata kodu {proc.returncode}: {proc.stderr[:300]}")
-        except subprocess.TimeoutExpired:
-            log.warning(f"  {size_label} için scikit-learn zaman aşımı (600s) → not olarak kaydedildi")
-            # Zaman aşımı kaydı
-            with open(sklearn_csv, "a", newline="", encoding="utf-8") as f:
-                writer = csv.DictWriter(
-                    f,
-                    fieldnames=["framework","model","size_n","rmse","mae","r2",
-                                "train_time_s","predict_time_s","peak_ram_mb","error"],
-                )
-                writer.writerow({
-                    "framework": "scikit-learn",
-                    "model": "TIMEOUT",
-                    "size_n": size_n,
-                    "rmse": None, "mae": None, "r2": None,
-                    "train_time_s": None, "predict_time_s": None, "peak_ram_mb": None,
-                    "error": f"Zaman aşımı >600s ({size_label})",
-                })
-        except Exception as exc:
-            log.warning(f"  subprocess başlatılamadı: {exc}")
-        finally:
-            Path(script_path).unlink(missing_ok=True)
-
-    # Sonuçları oku
-    if Path(sklearn_csv).exists():
-        import csv
-        with open(sklearn_csv, encoding="utf-8") as f:
-            all_rows = list(csv.DictReader(f))
-
-    return all_rows
-
-
-def save_results(spark_results: list[dict], sklearn_results: list[dict]) -> None:
-    """Deney sonuçlarını CSV olarak kaydet."""
-    import csv
-
-    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-
-    # PySpark sonuçları
-    spark_csv = RESULTS_DIR / "s4_spark_results.csv"
-    if spark_results:
-        fieldnames = list(spark_results[0].keys())
-        with open(spark_csv, "w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
-            writer.writeheader()
-            writer.writerows(spark_results)
-        log.info(f"PySpark sonuçları kaydedildi: {spark_csv}")
-
-    # Karşılaştırma tablosu (hem PySpark hem sklearn)
-    combined = []
-    for r in spark_results:
-        combined.append({
-            "framework": r["framework"],
-            "model": r["model"],
-            "size_label": r["size_label"],
-            "size_n": r["size_n"],
-            "rmse": r["rmse"],
-            "mae": r["mae"],
-            "r2": r["r2"],
-            "train_time_s": r["train_time_s"],
-            "predict_time_s": r["predict_time_s"],
-            "peak_ram_mb": r["peak_ram_mb"],
-            "error": "",
-        })
-    for r in sklearn_results:
-        size_n = int(r.get("size_n", 0))
-        label = {100_000: "100K", 1_000_000: "1M", 5_000_000: "5M"}.get(size_n, str(size_n))
-        combined.append({
-            "framework": r.get("framework", "scikit-learn"),
-            "model": r.get("model", ""),
-            "size_label": label,
-            "size_n": size_n,
-            "rmse": r.get("rmse"),
-            "mae": r.get("mae"),
-            "r2": r.get("r2"),
-            "train_time_s": r.get("train_time_s"),
-            "predict_time_s": r.get("predict_time_s"),
-            "peak_ram_mb": r.get("peak_ram_mb"),
-            "error": r.get("error", ""),
-        })
-
-    if combined:
-        combined_csv = RESULTS_DIR / "s4_comparison.csv"
-        fieldnames = list(combined[0].keys())
-        with open(combined_csv, "w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
-            writer.writeheader()
-            writer.writerows(combined)
-        log.info(f"Karşılaştırma tablosu kaydedildi: {combined_csv}")
-
-
-def save_feature_importance(spark, df_clean, out_path: Path) -> dict:
-    """GBTRegressor'ü tam örneklemde eğit ve feature importance kaydet."""
-    import csv
-
-    log.info("Feature importance için 1M örneklemde GBT eğitimi...")
-    needed_cols = [TARGET_COL] + NUMERIC_FEATURES + CATEGORICAL_FEATURES
-    df_sel = df_clean.select(needed_cols).filter(
-        df_clean[TARGET_COL].isNotNull() & (df_clean[TARGET_COL] > 0)
-    )
-    df_sample = _sample_data(df_sel, 1_000_000)
-    df_sample.cache()
-
-    pipeline = _build_pipeline("gbt")
-    model = pipeline.fit(df_sample)
-
-    # GBT modeli son stage
-    gbt_model = model.stages[-1]
-    importances = gbt_model.featureImportances.toArray()
-
-    # Feature isimleri: numerics (n tane) + OHE çıktıları (her PU/DO için çok kolon)
-    # VectorAssembler girdileri: NUMERIC_FEATURES + PULocationID_ohe + DOLocationID_ohe
-    # OHE kolon sayısını bulmak için pipeline stage'lerini incele
-    ohe_sizes = {}
-    for stage in model.stages:
-        if hasattr(stage, "categorySizes"):
-            ohe_sizes[stage.getInputCol()] = stage.categorySizes[0]
-
-    feature_names = list(NUMERIC_FEATURES)
-    for cat in CATEGORICAL_FEATURES:
-        idx_col = f"{cat}_idx"
-        n_cats = ohe_sizes.get(idx_col, 1)
-        for i in range(n_cats):
-            feature_names.append(f"{cat}_{i}")
-
-    # Boyut uyumsuzluğu olursa kırp/genişlet
-    n = min(len(importances), len(feature_names))
-    imp_dict = {feature_names[i]: float(importances[i]) for i in range(n)}
-    # Topla ve sırala
-    sorted_imp = sorted(imp_dict.items(), key=lambda x: -x[1])
-
-    with open(out_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=["feature", "importance"])
-        writer.writeheader()
-        for feat, imp in sorted_imp:
-            writer.writerow({"feature": feat, "importance": round(imp, 6)})
-
-    log.info(f"Feature importance kaydedildi: {out_path}")
-    df_sample.unpersist()
-    return dict(sorted_imp)
-
-
-def get_predictions_sample(spark, df_clean, n_sample: int = 5000) -> tuple:
-    """GBT ile 1M örneklemde eğit, test setinden tahminleri döndür (görselleştirme için)."""
-    needed_cols = [TARGET_COL] + NUMERIC_FEATURES + CATEGORICAL_FEATURES
-    df_sel = df_clean.select(needed_cols).filter(
-        df_clean[TARGET_COL].isNotNull() & (df_clean[TARGET_COL] > 0)
-    )
-    df_sample = _sample_data(df_sel, 1_000_000)
-    train_df, test_df = df_sample.randomSplit([TRAIN_RATIO, TEST_RATIO], seed=SAMPLE_SEED)
-
-    pipeline = _build_pipeline("gbt")
-    model = pipeline.fit(train_df)
-    preds = model.transform(test_df)
-
-    # Pandas'a çek (tüm dağılımdan rastgele örneklem)
-    pdf = (
-        preds.select(TARGET_COL, "prediction")
-        .sample(withReplacement=False, fraction=0.05, seed=SAMPLE_SEED)
-        .limit(n_sample)
-        .toPandas()
-    )
-    y_true = pdf[TARGET_COL].values
-    y_pred = pdf["prediction"].values
-    return y_true, y_pred
-
-
-def make_plots(spark_results: list[dict], sklearn_rows: list[dict], importance_dict: dict,
-               y_true, y_pred) -> None:
-    """3 görselleştirme oluştur ve kaydet."""
-    import matplotlib.pyplot as plt
-    import numpy as np
-    import pandas as pd
-    import seaborn as sns
-
-    FIGURES_DIR.mkdir(parents=True, exist_ok=True)
-    sns.set_theme(style="whitegrid", palette="muted")
-
-    # ----------------------------------------------------------------
-    # Figür 18: PySpark vs scikit-learn eğitim süresi ve bellek (boyuta göre)
-    # ----------------------------------------------------------------
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-    fig.suptitle("Şekil 18 · PySpark vs scikit-learn: Eğitim Süresi ve Bellek Tüketimi", fontsize=13)
-
-    spark_df = pd.DataFrame(spark_results)
-    sklearn_df = pd.DataFrame(sklearn_rows) if sklearn_rows else pd.DataFrame()
-    if not sklearn_df.empty and "size_label" not in sklearn_df.columns and "size_n" in sklearn_df.columns:
-        size_map = {100_000: "100K", 1_000_000: "1M", 5_000_000: "5M"}
-        sklearn_df["size_label"] = sklearn_df["size_n"].astype(int).map(
-            lambda v: size_map.get(v, str(v))
-        )
-
-    size_order = ["100K", "1M", "5M"]
-    x = np.arange(len(size_order))
-    width = 0.18
-
-    # --- Eğitim süresi ---
-    ax = axes[0]
-    for i, (fw, model_lbl, style) in enumerate([
-        ("PySpark", "LinearRegression", "steelblue"),
-        ("PySpark", "GBTRegressor", "navy"),
-        ("scikit-learn", "Ridge", "salmon"),
-        ("scikit-learn", "HistGradientBoosting", "firebrick"),
-    ]):
-        df_src = spark_df if fw == "PySpark" else sklearn_df
-        if df_src.empty:
-            continue
-        sub = df_src[(df_src["framework"] == fw) & (df_src["model"] == model_lbl)]
-        vals = []
-        for sl in size_order:
-            row = sub[sub["size_label"] == sl]
-            vals.append(float(row["train_time_s"].values[0]) if len(row) > 0 else 0)
-        ax.bar(x + i * width - 1.5 * width, vals, width, label=f"{fw}/{model_lbl}", color=style, alpha=0.85)
-
-    ax.set_xticks(x)
-    ax.set_xticklabels(size_order)
-    ax.set_xlabel("Veri boyutu")
-    ax.set_ylabel("Eğitim süresi (sn)")
-    ax.set_title("Eğitim Süresi")
-    ax.legend(fontsize=8)
-
-    # --- Bellek ---
-    ax = axes[1]
-    for i, (fw, model_lbl, style) in enumerate([
-        ("PySpark", "LinearRegression", "steelblue"),
-        ("PySpark", "GBTRegressor", "navy"),
-        ("scikit-learn", "Ridge", "salmon"),
-        ("scikit-learn", "HistGradientBoosting", "firebrick"),
-    ]):
-        df_src = spark_df if fw == "PySpark" else sklearn_df
-        if df_src.empty:
-            continue
-        sub = df_src[(df_src["framework"] == fw) & (df_src["model"] == model_lbl)]
-        vals = []
-        for sl in size_order:
-            row = sub[sub["size_label"] == sl]
-            vals.append(float(row["peak_ram_mb"].values[0]) if len(row) > 0 else 0)
-        ax.bar(x + i * width - 1.5 * width, vals, width, label=f"{fw}/{model_lbl}", color=style, alpha=0.85)
-
-    ax.set_xticks(x)
-    ax.set_xticklabels(size_order)
-    ax.set_xlabel("Veri boyutu")
-    ax.set_ylabel("Tepe RAM (MB)")
-    ax.set_title("Bellek Tüketimi")
-    ax.legend(fontsize=8)
-
-    plt.tight_layout()
-    out18 = FIGURES_DIR / "18_s4_scalability.png"
-    fig.savefig(out18, dpi=150, bbox_inches="tight")
-    plt.close(fig)
-    log.info(f"Şekil 18 kaydedildi: {out18}")
-
-    # ----------------------------------------------------------------
-    # Figür 19: 100K/1M/5M ölçeklerinde LR vs GBT RMSE & R² karşılaştırması
-    # ----------------------------------------------------------------
-    fig, axes = plt.subplots(1, 2, figsize=(13, 5))
-    fig.suptitle("Şekil 19 · PySpark LinearRegression vs GBTRegressor: RMSE ve R²", fontsize=13)
-
-    for ax, metric, ylabel in zip(
-        axes, ["rmse", "r2"], ["RMSE (dakika)", "R²"]
-    ):
-        for model_lbl, color in [("LinearRegression", "steelblue"), ("GBTRegressor", "darkorange")]:
-            sub = spark_df[spark_df["model"] == model_lbl]
-            vals = []
-            for sl in size_order:
-                row = sub[sub["size_label"] == sl]
-                vals.append(float(row[metric].values[0]) if len(row) > 0 else np.nan)
-            ax.plot(size_order, vals, "o-", label=model_lbl, color=color, linewidth=2, markersize=8)
-
-        ax.set_xlabel("Veri boyutu")
-        ax.set_ylabel(ylabel)
-        ax.set_title(ylabel)
-        ax.legend()
-
-    plt.tight_layout()
-    out19 = FIGURES_DIR / "19_s4_model_comparison.png"
-    fig.savefig(out19, dpi=150, bbox_inches="tight")
-    plt.close(fig)
-    log.info(f"Şekil 19 kaydedildi: {out19}")
-
-    # ----------------------------------------------------------------
-    # Figür 20: Feature importance + Gerçek vs Tahmin
-    # ----------------------------------------------------------------
-    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
-    fig.suptitle("Şekil 20 · GBTRegressor: Özellik Önemi ve Gerçek vs Tahmin", fontsize=13)
-
-    # Feature importance (top 15)
-    ax = axes[0]
-    if importance_dict:
-        top_feats = list(importance_dict.items())[:15]
-        feat_names = [f[0] for f in top_feats]
-        feat_vals = [f[1] for f in top_feats]
-        colors = sns.color_palette("Blues_r", len(feat_names))
-        ax.barh(feat_names[::-1], feat_vals[::-1], color=colors[::-1])
-        ax.set_xlabel("Önem Skoru")
-        ax.set_title("Özellik Önem Düzeyleri (İlk 15)")
-    else:
-        ax.text(0.5, 0.5, "Veri yok", ha="center", va="center")
-
-    # Gerçek vs Tahmin scatter
-    ax = axes[1]
-    if y_true is not None and y_pred is not None:
-        # 2000 nokta yeter
-        idx = np.random.default_rng(42).choice(len(y_true), min(2000, len(y_true)), replace=False)
-        ax.scatter(y_true[idx], y_pred[idx], alpha=0.3, s=10, color="steelblue")
-        lim = max(y_true[idx].max(), y_pred[idx].max()) * 1.05
-        ax.plot([0, lim], [0, lim], "r--", linewidth=1.5, label="Mükemmel tahmin")
-        ax.set_xlabel("Gerçek Süre (dk)")
-        ax.set_ylabel("Tahmin Edilen Süre (dk)")
-        ax.set_title("Gerçek vs Tahmin (GBT, 1M)")
-        ax.legend()
-    else:
-        ax.text(0.5, 0.5, "Tahmin verisi yok", ha="center", va="center")
-
-    plt.tight_layout()
-    out20 = FIGURES_DIR / "20_s4_feature_actual_pred.png"
-    fig.savefig(out20, dpi=150, bbox_inches="tight")
-    plt.close(fig)
-    log.info(f"Şekil 20 kaydedildi: {out20}")
-
-
-def main() -> None:
-    """Ana akış: Spark başlat → veri oku → deneyleri çalıştır → kaydet."""
-    from src.spark_session import get_spark
-    from src.config import CLEAN_DIR
-
-    log.info("Spark oturumu başlatılıyor...")
-    spark = get_spark(app_name="s4-ml-duration")
-
-    log.info(f"Temiz veri okunuyor: {CLEAN_DIR}")
-    df_clean = spark.read.parquet(str(CLEAN_DIR))
-    total_rows = df_clean.count()
-    log.info(f"Toplam kayıt: {total_rows:,}")
-
-    # 1) PySpark deneyleri
-    log.info("=== PySpark Deneyleri Başlıyor ===")
-    spark_results = run_spark_experiments(spark, df_clean)
-
-    # 2) scikit-learn kıyaslaması (subprocess)
-    log.info("=== scikit-learn Kıyaslaması Başlıyor ===")
-    # Parquet klasörünü pandas'ın okuyabileceği tek yola çevir
-    # (pandas read_parquet klasörü partition ile okuyabiliyor)
-    sklearn_rows = run_sklearn_comparison(str(CLEAN_DIR))
-
-    # 3) Kaydet
-    save_results(spark_results, sklearn_rows)
-
-    # 4) Feature importance
-    imp_path = RESULTS_DIR / "s4_feature_importance.csv"
-    importance_dict = save_feature_importance(spark, df_clean, imp_path)
-
-    # 5) Gerçek vs Tahmin
-    log.info("Gerçek vs Tahmin verisi alınıyor...")
-    try:
-        y_true, y_pred = get_predictions_sample(spark, df_clean)
-    except Exception as e:
-        log.warning(f"Tahmin örneği alınamadı: {e}")
-        y_true, y_pred = None, None
-
-    # 6) Grafikler
-    log.info("=== Grafikler Oluşturuluyor ===")
-    make_plots(spark_results, sklearn_rows, importance_dict, y_true, y_pred)
-
-    spark.stop()
-    log.info("=== S4 ML Pipeline Tamamlandı ===")
-
-
-def run_plots_only() -> None:
-    """Kayıtlı CSV sonuçlarından grafikleri üret (yeniden eğitim yapmaz)."""
-    import csv
-    from src.config import CLEAN_DIR
-    from src.spark_session import get_spark
-
-    comp_csv = RESULTS_DIR / "s4_comparison.csv"
-    imp_csv = RESULTS_DIR / "s4_feature_importance.csv"
-
-    if not comp_csv.exists() or not imp_csv.exists():
-        raise FileNotFoundError("Önce ana pipeline çalıştırılıp CSV'ler üretilmeli.")
-
-    with open(comp_csv, encoding="utf-8") as f:
-        all_rows = list(csv.DictReader(f))
-
-    spark_results = [r for r in all_rows if r["framework"] == "PySpark"]
-    sklearn_rows = [r for r in all_rows if r["framework"] == "scikit-learn"]
-
-    with open(imp_csv, encoding="utf-8") as f:
-        importance_dict = {r["feature"]: float(r["importance"]) for r in csv.DictReader(f)}
-
-    spark = get_spark(app_name="s4-ml-plots")
-    df_clean = spark.read.parquet(str(CLEAN_DIR))
-    log.info("Gerçek vs Tahmin verisi alınıyor (1M GBT)...")
-    try:
-        y_true, y_pred = get_predictions_sample(spark, df_clean)
-    except Exception as e:
-        log.warning(f"Tahmin örneği alınamadı: {e}")
-        y_true, y_pred = None, None
+            pdf.to_csv(PRED_SAMPLE_CSV, index=False)
+        return row
     finally:
         spark.stop()
 
-    make_plots(spark_results, sklearn_rows, importance_dict, y_true, y_pred)
-    log.info("Grafikler kaydedildi ✓")
+
+def run_sklearn_worker(sample_dir: Path, size_label: str, model_type: str) -> dict:
+    import pandas as pd
+
+    from src.mem_probe import PeakRSS
+
+    df = pd.read_parquet(sample_dir)
+    for c in CATEGORICAL_FEATURES:
+        df[c] = df[c].astype("int64")
+    is_train = df.pop(SPLIT_COL).to_numpy(dtype=bool)
+    y = df.pop(TARGET_COL).to_numpy()
+    X = df[NUMERIC_FEATURES + CATEGORICAL_FEATURES]
+    X_train, X_test, y_train, y_test = X[is_train], X[~is_train], y[is_train], y[~is_train]
+    del df, X  # yalnızca eğitim/test kopyaları kalsın
+
+    model = build_sklearn_model(model_type)
+    with PeakRSS() as probe:
+        t0 = time.perf_counter()
+        model.fit(X_train, y_train)
+        train_time = time.perf_counter() - t0
+
+        t1 = time.perf_counter()
+        y_pred = model.predict(X_test)
+        predict_time = time.perf_counter() - t1
+
+    return _result_row("scikit-learn", model_type, size_label, len(y_train), len(y_test),
+                       sklearn_metrics(y_test, y_pred), train_time, predict_time, probe)
+
+
+def _save_importance(importances) -> None:
+    rows = sorted(zip(feature_names(), importances), key=lambda kv: -kv[1])
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    with open(IMPORTANCE_CSV, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["feature", "importance"])
+        for name, imp in rows:
+            writer.writerow([name, round(float(imp), 6)])
+
+
+def _run_worker_subprocess(framework: str, model_type: str, size_label: str,
+                           sample_dir: Path, out_json: Path) -> dict:
+    cmd = [
+        sys.executable, "-m", "src.ml_duration", "--worker",
+        "spark" if framework == "PySpark" else "sklearn",
+        "--model", model_type, "--size", size_label,
+        "--sample-dir", str(sample_dir), "--out", str(out_json),
+    ]
+    out_json.unlink(missing_ok=True)
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=WORKER_TIMEOUT_S,
+                              cwd=Path(__file__).resolve().parent.parent)
+        if proc.returncode == 0 and out_json.exists():
+            return json.loads(out_json.read_text(encoding="utf-8"))
+        tail = (proc.stderr or "").strip().splitlines()
+        error = tail[-1] if tail else f"exit {proc.returncode}"
+    except subprocess.TimeoutExpired:
+        error = f"zaman aşımı > {WORKER_TIMEOUT_S} sn"
+    log.warning("  %s/%s/%s başarısız: %s", framework, model_type, size_label, error)
+    row = dict.fromkeys(RESULT_FIELDS, "")
+    row.update(framework=framework, model=_model_name(framework, model_type),
+               size_label=size_label, error=error[:300])
+    return row
+
+
+# ------------------------------------------------------------------
+# Orkestrasyon
+# ------------------------------------------------------------------
+
+def save_results(rows: list[dict]) -> None:
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    with open(COMPARISON_CSV, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=RESULT_FIELDS)
+        writer.writeheader()
+        writer.writerows(rows)
+    log.info("Karşılaştırma tablosu: %s", COMPARISON_CSV)
+
+
+def run_all(size_labels: list[str], force_samples: bool = False) -> list[dict]:
+    from src.spark_session import get_spark
+
+    sizes = [(lbl, n) for lbl, n in zip(SAMPLE_LABELS, SAMPLE_SIZES) if lbl in size_labels]
+
+    # 1) Örneklemleri hazırla (tek Spark oturumu), sonra oturumu kapat → ölçümlere RAM kalsın
+    spark = get_spark(app_name="s4-prepare")
+    try:
+        df_clean = spark.read.parquet(str(CLEAN_DIR))
+        sample_dirs = {}
+        for lbl, n in sizes:
+            log.info("Örneklem hazırlanıyor: %s", lbl)
+            sample_dirs[lbl] = prepare_sample(df_clean, lbl, n, force=force_samples)
+    finally:
+        spark.stop()
+
+    # 2) Her ölçüm ayrı süreçte
+    rows = []
+    tmp_dir = SAMPLES_DIR / "_worker_out"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    for lbl, _ in sizes:
+        for framework, model_type, name in EXPERIMENTS:
+            log.info("Ölçüm: %s / %s / %s", framework, name, lbl)
+            out_json = tmp_dir / f"{framework}_{model_type}_{lbl}.json"
+            row = _run_worker_subprocess(framework, model_type, lbl, sample_dirs[lbl], out_json)
+            if not row["error"]:
+                log.info("  RMSE=%.3f R²=%.4f eğitim=%.2f sn tepe RSS=%.0f MB",
+                         row["rmse"], row["r2"], row["train_time_s"], row["peak_rss_mb"])
+            rows.append(row)
+    return rows
+
+
+# ------------------------------------------------------------------
+# Grafikler
+# ------------------------------------------------------------------
+
+SERIES_STYLE = {
+    ("PySpark", "LinearRegression"): ("#2a78d6", "o", "--"),
+    ("PySpark", "GBTRegressor"): ("#2a78d6", "s", "-"),
+    ("scikit-learn", "LinearRegression"): ("#eb6834", "o", "--"),
+    ("scikit-learn", "HistGradientBoosting"): ("#eb6834", "s", "-"),
+}
+
+
+def make_plots(comparison, importance, pred_sample, out_dir: Path = FIGURES_DIR) -> None:
+    """Şekil 18–20. Girdi: s4_comparison / s4_feature_importance / s4_pred_sample DataFrame'leri."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import numpy as np
+    import pandas as pd
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    ok = comparison[comparison["error"].fillna("") == ""].copy()
+    for c in ("size_n", "train_time_s", "peak_rss_mb", "rmse", "r2"):
+        ok[c] = pd.to_numeric(ok[c])
+
+    def series(ax, ycol, logy=False):
+        for (fw, model), (color, marker, ls) in SERIES_STYLE.items():
+            sub = ok[(ok["framework"] == fw) & (ok["model"] == model)].sort_values("size_n")
+            if sub.empty:
+                continue
+            ax.plot(sub["size_n"], sub[ycol], color=color, marker=marker, linestyle=ls,
+                    linewidth=2, markersize=7, label=f"{fw} · {model}")
+        ax.set_xscale("log")
+        if logy:
+            ax.set_yscale("log")
+        ax.set_xlabel("Örneklem boyutu (kayıt, log)")
+        ax.grid(True, which="both", alpha=0.3)
+
+    # Şekil 18: eğitim süresi + tepe bellek
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    fig.suptitle("Şekil 18 · PySpark vs scikit-learn: eğitim süresi ve tepe bellek "
+                 "(aynı örneklem, aynı özellikler)", fontsize=12)
+    series(axes[0], "train_time_s", logy=True)
+    axes[0].set_ylabel("Eğitim süresi (sn, log)")
+    axes[0].set_title("Eğitim süresi")
+    series(axes[1], "peak_rss_mb")
+    axes[1].set_ylabel("Tepe RSS (MB) — Spark: Python + JVM")
+    axes[1].set_title("Eğitim sırasında süreç ağacının tepe belleği")
+    axes[0].legend(fontsize=8)
+    fig.tight_layout()
+    fig.savefig(out_dir / "18_s4_scalability.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+    # Şekil 19: doğruluk
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    fig.suptitle("Şekil 19 · Test kümesinde doğruluk: RMSE ve R²", fontsize=12)
+    series(axes[0], "rmse")
+    axes[0].set_ylabel("RMSE (dakika)")
+    axes[0].set_title("RMSE (düşük = iyi)")
+    series(axes[1], "r2")
+    axes[1].set_ylabel("R²")
+    axes[1].set_title("R² (yüksek = iyi)")
+    axes[1].legend(fontsize=8)
+    fig.tight_layout()
+    fig.savefig(out_dir / "19_s4_model_comparison.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+    # Şekil 20: özellik önemi + gerçek vs tahmin
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+    fig.suptitle(f"Şekil 20 · PySpark GBTRegressor ({FEATURE_IMPORTANCE_SIZE}): "
+                 "özellik önemi ve gerçek vs tahmin", fontsize=12)
+    imp = importance.sort_values("importance")
+    axes[0].barh(imp["feature"], imp["importance"], color="#2a78d6")
+    axes[0].set_xlabel("Önem (toplam = 1)")
+    axes[0].set_title("Özellik önemi (her bölge kolonu tek kategorik özellik)")
+    if pred_sample is not None and len(pred_sample):
+        y_true = pred_sample[TARGET_COL].to_numpy()
+        y_pred = pred_sample["prediction"].to_numpy()
+        axes[1].scatter(y_true, y_pred, alpha=0.25, s=8, color="#2a78d6")
+        lim = float(np.nanmax([y_true.max(), y_pred.max()])) * 1.05
+        axes[1].plot([0, lim], [0, lim], "k--", linewidth=1, label="y = x")
+        axes[1].set_xlabel("Gerçek süre (dk)")
+        axes[1].set_ylabel("Tahmin (dk)")
+        axes[1].set_title(f"Gerçek vs tahmin (test kümesinden {len(y_true):,} kayıt)")
+        axes[1].legend()
+    fig.tight_layout()
+    fig.savefig(out_dir / "20_s4_feature_actual_pred.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    log.info("Şekil 18–20 kaydedildi: %s", out_dir)
+
+
+def load_saved():
+    """Kayıtlı S4 sonuçlarını (karşılaştırma, özellik önemi, tahmin örneği) okur."""
+    import pandas as pd
+
+    comparison = pd.read_csv(COMPARISON_CSV, dtype={"error": str})
+    comparison["error"] = comparison["error"].fillna("")
+    importance = pd.read_csv(IMPORTANCE_CSV)
+    pred = pd.read_csv(PRED_SAMPLE_CSV) if PRED_SAMPLE_CSV.exists() else None
+    return comparison, importance, pred
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description="NYC Taxi süre tahmini (Öğrenci 4)")
+    parser.add_argument("--sizes", nargs="+", default=SAMPLE_LABELS, choices=SAMPLE_LABELS)
+    parser.add_argument("--plots-only", action="store_true",
+                        help="kayıtlı CSV'lerden yalnızca grafikleri üret")
+    parser.add_argument("--force-samples", action="store_true",
+                        help="örneklemleri yeniden üret")
+    # iç kullanım: tek ölçüm işçisi
+    parser.add_argument("--worker", choices=["spark", "sklearn"], help=argparse.SUPPRESS)
+    parser.add_argument("--model", choices=["lr", "gbt"], help=argparse.SUPPRESS)
+    parser.add_argument("--size", help=argparse.SUPPRESS)
+    parser.add_argument("--sample-dir", help=argparse.SUPPRESS)
+    parser.add_argument("--out", help=argparse.SUPPRESS)
+    args = parser.parse_args(argv)
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [S4] %(message)s")
+
+    if args.worker:
+        fn = run_spark_worker if args.worker == "spark" else run_sklearn_worker
+        row = fn(Path(args.sample_dir), args.size, args.model)
+        Path(args.out).write_text(json.dumps(row), encoding="utf-8")
+        return
+    if not args.plots_only:
+        save_results(run_all(args.sizes, force_samples=args.force_samples))
+    make_plots(*load_saved())
 
 
 if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser(description="NYC Taxi Yolculuk Süresi ML Pipeline (Öğrenci 4)")
-    parser.add_argument(
-        "--plots-only",
-        action="store_true",
-        help="Kayıtlı CSV sonuçlarını kullanarak yalnızca grafikleri üret",
-    )
-    args = parser.parse_args()
-    if args.plots_only:
-        run_plots_only()
-    else:
-        main()
+    main()
