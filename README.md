@@ -187,7 +187,7 @@ df = get_spark().read.parquet("data/clean")   # 17,2M kayıt; pickup_year/pickup
 
 **Notebook:** [`notebooks/03_aggregation_ders.ipynb`](notebooks/03_aggregation_ders.ipynb) · **Girdi:** Ocak–Mayıs 2026, 17.210.961 temiz Yellow Taxi yolculuğu
 
-Ders notebook'u aynı temiz Parquet verisinden altı özeti PySpark ve pandas ile üretir ve sonuçları karşılaştırır. local[2] ile local[4] üzerinde sorgu sürelerini, ayrıca broadcast ve sort-merge birleştirme sürelerini gösterir.
+Ders notebook'u temiz Parquet verisinden altı özeti PySpark ile üretir ve sonuçların kapsamını kontrol eder. local[2] ile local[4] üzerinde sorgu sürelerini, ayrıca broadcast ve sort-merge birleştirme sürelerini gösterir.
 
 | İş | Çıktı | Teknik ayrıntı |
 |---|---|---|
@@ -212,7 +212,7 @@ python -c "from src.config import ZONE_LOOKUP_URL, ZONE_LOOKUP_PATH; from src.in
 python -m src.aggregate_trips --analysis all --export
 ```
 
-Komut `reports/results/s3_*.csv` tablolarını üretir. Ders notebook’u altı özeti temiz Parquet verisinden PySpark ve pandas ile ayrı ayrı hesaplayıp sonuçları karşılaştırır ve grafikleri oluşturur; `src/compare_aggregation.py` karşılaştırma işlevlerini içerir. Notebook’taki süre deneyleri istenirse ayrı hücreden yeniden çalıştırılabilir. Kayıtlı çıktılar notebook açıldığında veri veya Spark kurulumu olmadan görüntülenebilir. Haritayı yeniden çizmek için [NYC Taxi Zones](https://catalog.data.gov/dataset/nyc-taxi-zones) GeoJSON dosyasını `data/raw/taxi_zones.geojson` olarak kaydedin. Gün × saat görseli [Loayib'in NYC Taxi analizinden](https://github.com/Loayib/NYC_Taxi_Analysis) esinlendi.
+Komut `reports/results/s3_*.csv` tablolarını üretir. Ders notebook’u altı özeti temiz Parquet verisinden PySpark ile hesaplayıp kapsam ve toplamları kontrol eder, ardından grafikleri oluşturur; `src/compare_aggregation.py` PySpark sonuçlarını hazırlayan yardımcı işlevleri de içerir. Notebook’taki süre deneyleri istenirse ayrı hücreden yeniden çalıştırılabilir. Kayıtlı çıktılar notebook açıldığında veri veya Spark kurulumu olmadan görüntülenebilir. Haritayı yeniden çizmek için [NYC Taxi Zones](https://catalog.data.gov/dataset/nyc-taxi-zones) GeoJSON dosyasını `data/raw/taxi_zones.geojson` olarak kaydedin. Gün × saat görseli [Loayib'in NYC Taxi analizinden](https://github.com/Loayib/NYC_Taxi_Analysis) esinlendi.
 
 ## 9. Öğrenci 4 — ML modeli: Yolculuk Süresi Tahmini
 
