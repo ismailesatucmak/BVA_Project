@@ -59,3 +59,14 @@ def get_spark(app_name: str = "nyc-taxi", driver_memory: str = DEFAULT_DRIVER_ME
         .config("spark.ui.showConsoleProgress", "false")
         .getOrCreate()
     )
+
+
+def spread_partitions(df, n: int | None = None):
+    """Veriyi n bölüme (varsayılan: çekirdek sayısı) eşit dağıtır.
+
+    Tek dosya Parquet'te Spark bir row group'u bölemez: 128 MB'lık row group'larla yazılmış
+    5M kayıtlık dosya 1 bölüm olarak okunur ve tüm iş tek çekirdekte çalışır (S5'te ölçüldü).
+    Veriyi önbelleğe almadan veya iteratif bir algoritmaya (ML) vermeden önce çağrılır.
+    """
+    n = n or df.sparkSession.sparkContext.defaultParallelism
+    return df.repartition(n)

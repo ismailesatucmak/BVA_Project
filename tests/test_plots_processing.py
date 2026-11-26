@@ -2,7 +2,7 @@ import pandas as pd
 import pytest
 
 from src import plots_processing as pp
-from src.benchmark_processing import OPERATIONS, SETUP_STEP
+from src.benchmark_processing import OPERATIONS, SETUP_STEPS
 
 
 def _summary(spark_fixed=10.0):
@@ -13,7 +13,7 @@ def _summary(spark_fixed=10.0):
             for engine in ("pandas", "spark"):
                 setup = rows / 1e6 if engine == "pandas" else spark_fixed
                 recs.append({"engine": engine, "size": str(rows), "format": fmt,
-                             "op": SETUP_STEP[engine], "rows": rows, "seconds_mean": setup,
+                             "op": SETUP_STEPS[engine][0], "rows": rows, "seconds_mean": setup,
                              "peak_rss_mb": 100 + rows / 2000})
                 for op in OPERATIONS:
                     sec = rows / 1e6 if engine == "pandas" else 0.5 + rows / 2e7
@@ -41,7 +41,8 @@ def test_memory_per_row_slope():
     assert slopes["csv"] == pytest.approx(1024 / 1000)
 
 
-@pytest.mark.parametrize("plot", [pp.plot_op_time, pp.plot_end_to_end, pp.plot_memory])
+@pytest.mark.parametrize("plot", [pp.plot_op_time, pp.plot_end_to_end, pp.plot_memory,
+                                  pp.plot_time_breakdown])
 def test_figures_render(tmp_path, plot):
     path = plot(_summary(), tmp_path)
     assert path.exists() and path.stat().st_size > 0

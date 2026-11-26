@@ -99,14 +99,14 @@ python scripts/smoke_test_spark.py      # Spark kurulum testi
 | 7 | `python -m src.anomaly` | anomali analizi (window + join) | ~3 dk |
 | 8 | `notebooks/01_*.ipynb`, `notebooks/02_*.ipynb` | grafikler ve yorum | — |
 | 9 | `python -m src.aggregate_trips --analysis all --export` | saati, günü, biniş bölgesini ve ödeme türünü özetler, CSV'leri yazar (§8) | — |
-| 10 | `python -m src.ml_duration` | S4: örneklemler + 12 ML ölçümü + Şekil 18–20 (§9) | ~10 dk |
-| 11 | `python -m src.benchmark_processing` | S5: pandas vs Spark × CSV vs Parquet × 5 boyut × 3 işlem (§10) | ~10 dk |
-| 12 | `python -m src.plots_processing` · `python -m src.dashboard` | S5: Şekil 21–23 ve `reports/dashboard/index.html` | < 1 dk |
+| 10 | `python -m src.ml_duration` · `python -m src.ml_analysis` | S4: örneklemler + 16 ML ölçümü + Şekil 18–20; sızıntı, arama, hata analizi + Şekil 24–25 (§9) | ~25 dk |
+| 11 | `python -m src.benchmark_processing` · `python -m src.scale_synthetic` | S5: pandas vs Spark vs Spark + cache × CSV vs Parquet × 5 boyut × 3 işlem + sentetik 57M + dosya düzeni kontrolü (§10) | ~35 dk |
+| 12 | `python -m src.plots_processing` · `python -m src.dashboard` | S5: Şekil 21–23, 26 ve `reports/dashboard/index.html` | < 1 dk |
 
-\* 1–9: 28 çekirdek, 16 GB RAM, NVMe SSD (S1/S2 makinesi). 10–12: i7-13700H, 20 iş parçacığı, 32 GB RAM. Her script kaldığı yerden devam eder veya sonucu yeniden üretir.
+\* 1–9: 28 çekirdek, 16 GB RAM, NVMe SSD (S1/S2 makinesi). 10–12: i7-13700H, 20 iş parçacığı, 32 GB RAM, performans modunda (dizüstüde dengeli modda süreler ~2,7× uzar). Her script kaldığı yerden devam eder veya sonucu yeniden üretir.
 Yalnızca temiz veri gerekiyorsa bu tablonun yerine `python -m src.fetch_data` yeterlidir (§0).
 
-**Testler:** `python -m pytest tests` (128 test; Spark testleri tek çekirdekle çalışır, ~1–2 dk).
+**Testler:** `python -m pytest tests` (144 test; Spark testleri tek çekirdekle çalışır, ~1–2 dk).
 
 ## 5. Klasör yapısı
 
@@ -114,14 +114,14 @@ Yalnızca temiz veri gerekiyorsa bu tablonun yerine `python -m src.fetch_data` y
 src/            ingest, dictionary_stats, build_sizes, benchmark_io, plots_io        (Öğrenci 1)
                 quality, profile_data, clean, anomaly, plots_clean                    (Öğrenci 2)
                 aggregate_trips, compare_aggregation                                  (Öğrenci 3)
-                ml_duration                                                           (Öğrenci 4)
-                benchmark_processing, plots_processing, dashboard                     (Öğrenci 5)
+                ml_duration, ml_analysis                                              (Öğrenci 4)
+                benchmark_processing, scale_synthetic, plots_processing, dashboard    (Öğrenci 5)
                 config (yollar + eşikler), spark_session (Windows ayarları),
                 fetch_data (temiz veriyi Release'den kurar), mem_probe (tepe bellek)  (ortak)
 notebooks/      01_data_acquisition_and_formats, 02_cleaning_and_anomalies,
                 03_aggregation, 03_aggregation_ders, 04_ml_duration_prediction,
                 04_ml_duration_ders, 05_processing_benchmark, 05_processing_ders
-reports/        results/*.csv (ölçümler ve özetler) · figures/01–23_*.png · dashboard/index.html
+reports/        results/*.csv (ölçümler ve özetler) · figures/01–26_*.png · dashboard/index.html
 docs/           ROADMAP, data_dictionary, cleaning_rules, technical_report_s1_s2/_s3/_s4/_s5,
                 exam_questions_s1_s2/_s3/_s4/_s5, PROJECT_REQUIREMENTS, architecture.png
 data/           raw/ (TLC) · clean/ (temiz veri) · samples/ — Git'e girmez
@@ -216,7 +216,7 @@ Komut `reports/results/s3_*.csv` tablolarını üretir. Ders notebook’u altı 
 
 ## 9. Öğrenci 4 — ML modeli: Yolculuk Süresi Tahmini
 
-**Notebook:** [`notebooks/04_ml_duration_prediction.ipynb`](notebooks/04_ml_duration_prediction.ipynb) · **Ders gösterimi:** [`notebooks/04_ml_duration_ders.ipynb`](notebooks/04_ml_duration_ders.ipynb) · **Girdi:** 17.210.961 temiz yolculuktan 100K / 1M / 5M örneklem
+**Notebook:** [`notebooks/04_ml_duration_prediction.ipynb`](notebooks/04_ml_duration_prediction.ipynb) · **Ders gösterimi:** [`notebooks/04_ml_duration_ders.ipynb`](notebooks/04_ml_duration_ders.ipynb) · **Girdi:** 17.210.961 temiz yolculuktan 100K / 1M / 5M örneklem + verinin tamamı (17M)
 
 Yolculuk süresi (`trip_duration_min`) için PySpark MLlib (`LinearRegression`, `GBTRegressor`) ve scikit-learn (`LinearRegression`, `HistGradientBoostingRegressor`) **aynı koşullarda** karşılaştırıldı:
 
@@ -228,42 +228,48 @@ Yolculuk süresi (`trip_duration_min`) için PySpark MLlib (`LinearRegression`, 
 | İş | Çıktı | Teknik ayrıntı |
 |---|---|---|
 | Pipeline + deney | `src/ml_duration.py` | Bölge kodlaması yalnızca eğitim kümesinden öğrenilir (en sık 254 bölge + "diğer"). Spark'ta nominal metadata ile kategorik ağaç bölmesi (`maxBins=256`). |
+| Ek analizler | `src/ml_analysis.py` | Özellik sızıntısı (biniş anında bilinmeyen ücret kalemleri çıkarılır), doğrulama kümesiyle hiperparametre araması (test seçimde kullanılmaz), mesafe/saat/ilçe bazında hata analizi (bölge tablosuyla join) |
 | Bellek ölçümü | `src/mem_probe.py` | `PeakRSS`: Python + JVM süreç ağacını 50 ms'de bir örnekler (S5 de kullanır) |
-| Sonuçlar | [`s4_comparison.csv`](reports/results/s4_comparison.csv), [`s4_feature_importance.csv`](reports/results/s4_feature_importance.csv), [`s4_pred_sample.csv`](reports/results/s4_pred_sample.csv) | 2 çerçeve × 2 model × 3 boyut = 12 ölçüm |
-| Grafikler | [Şekil 18](reports/figures/18_s4_scalability.png), [19](reports/figures/19_s4_model_comparison.png), [20](reports/figures/20_s4_feature_actual_pred.png) | Süre + bellek; RMSE + R²; özellik önemi + gerçek vs tahmin |
+| Sonuçlar | [`s4_comparison.csv`](reports/results/s4_comparison.csv), [`s4_feature_importance.csv`](reports/results/s4_feature_importance.csv), [`s4_pred_sample.csv`](reports/results/s4_pred_sample.csv), [`s4_ablation.csv`](reports/results/s4_ablation.csv), [`s4_tuning.csv`](reports/results/s4_tuning.csv), [`s4_error_analysis.csv`](reports/results/s4_error_analysis.csv) | 2 çerçeve × 2 model × 4 boyut = 16 ölçüm + ek analizler |
+| Grafikler | [Şekil 18](reports/figures/18_s4_scalability.png), [19](reports/figures/19_s4_model_comparison.png), [20](reports/figures/20_s4_feature_actual_pred.png), [24](reports/figures/24_s4_ablation_tuning.png), [25](reports/figures/25_s4_error_analysis.png) | Süre + bellek; RMSE + R²; özellik önemi + gerçek vs tahmin; sızıntı + arama; hata analizi |
 
-**Sonuçlar (5M; i7-13700H, 32 GB RAM):**
+**Sonuçlar (5M ve tam veri 17M; i7-13700H, 32 GB RAM, performans modu; Spark verisi 20 bölüme dağıtılmış):**
 
-| Çerçeve | Model | RMSE (dk) | R² | Eğitim (sn) | Tepe RSS (MB) |
-|---|---|---:|---:|---:|---:|
-| PySpark | LinearRegression | 7,175 | 0,647 | 12,3 | 1.815 |
-| scikit-learn | LinearRegression | 7,176 | 0,647 | 32,1 | 3.071 |
-| PySpark | GBTRegressor | 5,481 | 0,794 | 197,4 | 4.161 |
-| scikit-learn | HistGradientBoosting | 5,561 | 0,788 | 4,8 | 2.209 |
+| Çerçeve | Model | RMSE 5M | RMSE 17M | R² 17M | Eğitim 5M (sn) | Eğitim 17M (sn) | Tepe RSS 17M (MB) |
+|---|---|---:|---:|---:|---:|---:|---:|
+| PySpark | LinearRegression | 7,175 | 7,163 | 0,649 | 6,0 | **9,9** | 5.651 |
+| scikit-learn | LinearRegression | 7,176 | 7,164 | 0,649 | 32,1 | 106,9 | 10.088 |
+| PySpark | GBTRegressor | 5,469 | **5,453** | **0,796** | 140,7 | 269,1 | 6.918 |
+| scikit-learn | HistGradientBoosting | 5,561 | 5,540 | 0,790 | 4,8 | **19,9** | 7.133 |
 
-- **Karşılaştırma adil:** OLS iki çerçevede aynı sonucu veriyor (RMSE farkı ≤ 0,002). Farklar yalnızca algoritma uygulamasından geliyor.
-- **GBT, doğrusal modelden ~%24 daha iyi** (RMSE 7,18 → 5,48). Doğrusal modelin R²'si boyutla sabit kalıyor (0,64–0,65); GBT veri arttıkça iyileşiyor (0,75 → 0,79).
-- **Özellik önemi:** `trip_distance` 0,47 · `DOLocationID` 0,18 · `pickup_hour` 0,14 · `PULocationID` 0,12 · `pickup_dow` 0,07.
-- **Tek makinede klasik yaklaşım daha hızlı:** sklearn GBT 100K'da ~110×, 5M'de ~40× hızlı. Spark'ın iş zamanlama ve serileştirme maliyeti sabittir; veri büyüdükçe payı azalır. Doğrusal modelde ise sıra 1M'de tersine dönüyor: Spark'ın paralel normal denklemi, sklearn'ün tek çekirdekli seyrek `lsqr` çözücüsünü geçiyor.
-- **Bellek:** Spark'ın JVM tabanı (~0,5 GB) var ve GBT'de en fazla belleği o kullanıyor. sklearn belleği kayıtla doğrusal artıyor (~0,4–0,6 KB/kayıt); bu makinede ~55–80M kayıtta RAM dolar.
-- **İlk sürümdeki ölçüm hataları düzeltildi:** sklearn tüm veriyi okuyordu; Spark'ta yalnızca Python süreci ölçülüyordu; özellik setleri farklıydı. Ayrıntı: [teknik rapor](docs/technical_report_s4.md).
+**Ek analizler (5M test, sklearn HistGradientBoosting):** ücret kalemleri çıkarılınca RMSE 5,561 → 5,536 (sızıntı endişesi doğruluğa mal olmuyor); mesafe de çıkarılınca 6,912. Doğrulama kümesiyle seçilen ayar (200 ağaç, sınırsız derinlik/63 yaprak) RMSE'yi **5,536 → 5,042** (R² 0,790 → 0,826) indiriyor. Hata mesafeyle artıyor ama göreli hata azalıyor (%29 → %16); ortalama sapma ≈ 0.
+
+- **Karşılaştırma adil:** OLS iki çerçevede aynı sonucu veriyor (dört boyutta RMSE farkı ≤ 0,002). Farklar yalnızca algoritma uygulamasından geliyor.
+- **GBT, doğrusal modelden ~%24 daha iyi** (RMSE 7,16 → 5,45). Doğrusal modelin R²'si boyutla sabit (0,64–0,65); GBT veri arttıkça iyileşiyor (0,76 → 0,80) ama 5M → 17M kazancı 0,001. Bu noktada veri eklemek değil, modeli büyütmek (arama: R² 0,826) kazandırıyor.
+- **Özellik önemi:** `trip_distance` 0,47 · `DOLocationID` 0,18 · `pickup_hour` 0,13 · `PULocationID` 0,13 · `pickup_dow` 0,07.
+- **Spark ve dosya düzeni:** örneklemler tek Parquet dosyası (1–2 row group) → Spark 1–2 çekirdekle eğitiyordu. Veriyi 20 bölüme dağıtmak büyük veride kazandırıyor (17M GBT 990 → 269 sn, LinearRegression 34 → 10 sn), küçük veride kaybettiriyor (100K GBT 23 → 103 sn: 50 ağaç × seviye başına 20 görevin koordinasyon maliyeti).
+- **Ağaç modelinde klasik yaklaşım daha hızlı, fark kapanıyor:** sklearn GBT 100K'da ~500×, 5M'de ~29×, 17M'de ~14× hızlı. Ama marjinal maliyet de sklearn'de ~9× düşük (ek milyon kayıt: 1,2 sn vs 10,5 sn) → tek makinede Spark GBT yetişemiyor.
+- **Doğrusal modelde klasik yaklaşım 1M'den itibaren geride, 17M'de 11× yavaş ve 10,1 GB bellek** (Spark 5,7 GB). Spark normal denklemi 20 görevde paralel kuruyor; sklearn seyrek one-hot matris + tek çekirdekli `lsqr` çözücü kullanıyor.
+- **Bellek:** sklearn belleği kayıtla doğrusal artıyor; 17M ölçümü bu eğimi doğruladı (~0,40–0,58 KB/kayıt) → bu makinede ~55–80M kayıtta RAM dolar.
+- **Önceki sürümlerdeki ölçüm hataları düzeltildi:** sklearn tüm veriyi okuyordu; Spark'ta yalnızca Python süreci ölçülüyordu; özellik setleri farklıydı; Spark 1–2 çekirdek kullanıyordu. Ayrıntı: [teknik rapor](docs/technical_report_s4.md).
 
 **Yeniden üretim:**
 
 ```powershell
 python -m src.fetch_data                 # veri yoksa indir
-python -m src.ml_duration                # örneklemler + 12 ölçüm (~10 dk) + grafikler
+python -m src.ml_duration                # örneklemler + 16 ölçüm (~20 dk, performans modunda) + grafikler
 python -m src.ml_duration --plots-only   # kayıtlı CSV'lerden grafikleri yeniden üret
-python -m pytest tests/test_ml_duration.py -v
+python -m src.ml_analysis                # sızıntı + hiperparametre araması + hata analizi (~2 dk) + Şekil 24–25
+python -m pytest tests/test_ml_duration.py tests/test_ml_analysis.py -v
 ```
 
 Ayrıntılı teknik yorum: [`docs/technical_report_s4.md`](docs/technical_report_s4.md) · Sınav soruları: [`docs/exam_questions_s4.md`](docs/exam_questions_s4.md)
 
 ## 10. Öğrenci 5 — İşleme performansı ve dashboard
 
-**Notebook:** [`notebooks/05_processing_benchmark.ipynb`](notebooks/05_processing_benchmark.ipynb) · **Ders gösterimi:** [`notebooks/05_processing_ders.ipynb`](notebooks/05_processing_ders.ipynb) · **Dashboard:** [`reports/dashboard/index.html`](reports/dashboard/index.html) (tarayıcıda açılır; sunucu ve ek kütüphane gerektirmez) · **Girdi:** S1'in boyut setleri (100K … 19M)
+**Notebook:** [`notebooks/05_processing_benchmark.ipynb`](notebooks/05_processing_benchmark.ipynb) · **Ders gösterimi:** [`notebooks/05_processing_ders.ipynb`](notebooks/05_processing_ders.ipynb) · **Dashboard:** [`reports/dashboard/index.html`](reports/dashboard/index.html) (tarayıcıda açılır; sunucu ve ek kütüphane gerektirmez) · **Girdi:** S1'in boyut setleri (100K … 19M) + sentetik 57M (19M × 3)
 
-Öğrenci 1 okumayı ölçtü; burada **işleme** ölçüldü. Üç ileri analitik işlem pandas ve PySpark ile, CSV ve Parquet üzerinde, 5 veri boyutunda karşılaştırıldı:
+Öğrenci 1 okumayı ölçtü; burada **işleme** ölçüldü. Üç ileri analitik işlem üç çalışma modeliyle (pandas, dosyadan okuyan Spark, önbelleğe alan Spark), CSV ve Parquet üzerinde, 6 veri boyutunda karşılaştırıldı:
 
 - **groupby:** saate göre özet
 - **join:** bölge tablosu → ilçe
@@ -271,35 +277,44 @@ Ayrıntılı teknik yorum: [`docs/technical_report_s4.md`](docs/technical_report
 
 | İş | Dosya | Teknik ayrıntı |
 |---|---|---|
-| Benchmark | `src/benchmark_processing.py` | Her motor × boyut × format ayrı süreçte; 1 ısınma + 3 tekrar. pandas: bir kez yükle, bellekte işle. Spark: her işlem dosyadan (tembel), `collect` ile tetiklenir. Oturum açılışı ayrı ölçülür. Tepe RSS (JVM dahil). Sonuçlar checksum ile doğrulanır (20/20 tutarlı). |
-| Grafikler | `src/plots_processing.py` | [Şekil 21](reports/figures/21_s5_op_time.png) işlem süresi, [22](reports/figures/22_s5_end_to_end.png) uçtan uca + kesişim noktası, [23](reports/figures/23_s5_memory.png) tepe bellek |
+| Benchmark | `src/benchmark_processing.py` | Her motor × boyut × format ayrı süreçte; 1 ısınma + 3 tekrar. pandas: bir kez yükle, bellekte işle. Spark: her işlem dosyadan (tembel), `collect` ile tetiklenir. Spark + cache: bir kez oku, 20 bölüme dağıt, önbelleğe al, işlemleri önbellekten çalıştır. Oturum açılışı ayrı ölçülür. Tepe RSS (JVM dahil). Sonuçlar checksum ile doğrulanır (tüm boyutlarda tutarlı). |
+| Sentetik ölçek + düzen kontrolü | `src/scale_synthetic.py` | 19M × 3 = 57M kayıt (kopyalar blok blok yazılır, sıkıştırma yapay olarak iyileşmez). 19M Parquet'in 23 row group'lu kopyası (dosya düzeninin Spark'a etkisi). |
+| Grafikler | `src/plots_processing.py` | [Şekil 21](reports/figures/21_s5_op_time.png) işlem süresi, [22](reports/figures/22_s5_end_to_end.png) uçtan uca + kesişim noktası, [23](reports/figures/23_s5_memory.png) tepe bellek, [26](reports/figures/26_s5_time_breakdown.png) sürenin adımlara dökümü |
 | Dashboard | `src/dashboard.py` | Tüm öğrencilerin `reports/results/*.csv` sonuçlarını tek sayfada toplar. S5 grafiği etkileşimli: işlem ve metrik seçimi, değer ipucu, tablo görünümü. |
-| Sonuçlar | [`s5_processing.csv`](reports/results/s5_processing.csv), [`s5_processing_raw.csv`](reports/results/s5_processing_raw.csv) | süre ort. ± std, throughput, tepe RSS, sonuç checksum'ı |
+| Sonuçlar | [`s5_processing.csv`](reports/results/s5_processing.csv), [`s5_processing_raw.csv`](reports/results/s5_processing_raw.csv), [`s5_synthetic_manifest.csv`](reports/results/s5_synthetic_manifest.csv) | süre ort. ± std, throughput, tepe RSS, sonuç checksum'ı |
 
-**Sonuçlar (19M kayıt, sn):**
+**Sonuçlar (19M kayıt, sn; i7-13700H, 20 iş parçacığı, 32 GB RAM, performans modu):**
 
-| | pandas + CSV | pandas + Parquet | Spark + CSV | Spark + Parquet |
-|---|---:|---:|---:|---:|
-| Hazırlık (yükleme / oturum açılışı) | 18,8 | 0,4 | 5,5 | 5,8 |
-| groupby | 0,70 | 0,70 | 5,86 | 0,91 |
-| join | 1,97 | 2,13 | 4,21 | **0,71** |
-| window | 2,07 | 2,09 | 6,62 | 6,10 |
-| **Uçtan uca** | 23,6 | **5,3** | 22,2 | 13,5 |
-| Tepe bellek | 2,7 GB | 3,1 GB | 4,9 GB | 4,2 GB |
+| | pandas + CSV | pandas + Parquet | Spark + CSV | Spark + Parquet | Spark + cache + CSV | Spark + cache + Parquet |
+|---|---:|---:|---:|---:|---:|---:|
+| Hazırlık (yükleme / açılış / açılış + önbellek) | 18,8 | 0,4 | 5,5 | 5,8 | 17,4 | 14,6 |
+| groupby | 0,70 | 0,70 | 5,86 | 0,91 | **0,56** | 0,69 |
+| join | 1,97 | 2,13 | 4,20 | 0,71 | **0,47** | 0,61 |
+| window | **2,07** | 2,09 | 6,62 | 6,10 | 3,34 | 3,33 |
+| **Uçtan uca** | 23,6 | **5,3** | 22,2 | 13,5 | 21,7 | 19,3 |
+| Tepe bellek | 2,7 GB | 3,1 GB | 4,9 GB | 4,2 GB | 6,4 GB | 5,7 GB |
 
-- **pandas + CSV, ~16M kayıtta Spark + CSV'nin gerisine düşüyor** (Spark + Parquet'e karşı ~9M). Darboğaz işlem değil, tek çekirdekli CSV parse (~1M kayıt/sn).
-- **Format, motordan daha belirleyici:** pandas + Parquet 19M'de bile en hızlı seçenek. Spark'ın sabit maliyetleri (oturum ~5,5 sn, işlem başına ~0,25 sn) tek makinede amorti olmuyor.
-- **İşlem türü sonucu değiştiriyor:** join'de Spark 4,5M'den itibaren önde (broadcast hash join, birleşik tabloyu hiç oluşturmuyor). window'da 19M'de hâlâ 3× geride (tüm verinin shuffle + sıralama maliyeti).
-- **Sert sınır bellek:** pandas'ın tepe belleği 6 kolonla ~0,15 KB/kayıt artıyor; bu makinede ~200M kayıtta RAM dolar (S1'in 20 kolonlu ölçümünde ~0,5 KB/kayıt).
+**57M (sentetik):** uçtan uca pandas + Parquet **21,4 sn**, pandas + CSV 70,8 sn, Spark + cache + Parquet 36,8 sn, Spark + cache + CSV 42,7 sn. join pandas 8,5 sn vs Spark + cache 0,9 sn. Tepe bellek pandas 9,1 GB vs Spark + cache 6,8 GB.
+
+- **pandas + CSV, ~16M kayıtta Spark'ın gerisine düşüyor.** Darboğaz işlem değil, tek çekirdekli CSV parse (~1M kayıt/sn); 57M'de 70,8 sn vs 42,7 sn.
+- **Format, motordan daha belirleyici:** pandas + Parquet 57M'de bile uçtan uca en hızlı seçenek. Ama süresi veriden hızlı artıyor (3× veri → 4× süre; Spark + cache 1,9×).
+- **İşlem türü sonucu değiştiriyor:** join'de Spark 4,5M'den itibaren önde (broadcast hash join; 57M'de 8–9×). window'da pandas 57M'e kadar önde ya da başa baş (shuffle + sıralama maliyeti).
+- **Dosya düzeni Spark'ı kısıtlıyor:** S1'in tek dosyalık Parquet'leri 1–3 row group → Spark 1–3 çekirdekle okuyor. Aynı 19M'i 23 row group'la yazınca Spark window 6,1 → 3,85 sn.
+- **Önbellek** işlemleri hızlandırıyor (19M join 0,47 sn) ama yükleme maliyeti (Parquet 8,9 sn) yalnızca tekrarlanan sorgularda amorti oluyor.
+- **Sert sınır bellek:** pandas'ın tepe belleği 6 kolonla ~0,15 KB/kayıt doğrusal artıyor (57M ölçümü doğruladı); 57M'de pandas ilk kez Spark'tan fazla bellek kullanıyor. Bu makinede ~200M kayıtta RAM dolar (20 kolonla ~65M).
 
 **Yeniden üretim:**
 
 ```powershell
-python -m src.build_sizes              # boyut setleri yoksa (S1)
-python -m src.benchmark_processing     # ~10 dk; tamamlananları atlar, --force ile yeniden ölçer
+python -m src.build_sizes                     # boyut setleri yoksa (S1)
+python -m src.benchmark_processing            # ~15 dk; tamamlananları atlar, --force ile yeniden ölçer
+python -m src.scale_synthetic --factor 3      # sentetik 57M
+python -m src.benchmark_processing --sizes x3 --engines pandas spark_cache
+python -m src.scale_synthetic --layout        # 19M Parquet, 23 row group
+python -m src.benchmark_processing --sizes full_rg16 --formats parquet_snappy
 python -m src.plots_processing
-python -m src.dashboard                # reports/dashboard/index.html
-python -m pytest tests/test_benchmark_processing.py tests/test_plots_processing.py tests/test_dashboard.py -v
+python -m src.dashboard                       # reports/dashboard/index.html
+python -m pytest tests/test_benchmark_processing.py tests/test_plots_processing.py tests/test_dashboard.py tests/test_scale_synthetic.py -v
 ```
 
 Ayrıntılı teknik yorum: [`docs/technical_report_s5.md`](docs/technical_report_s5.md) · Sınav soruları: [`docs/exam_questions_s5.md`](docs/exam_questions_s5.md)

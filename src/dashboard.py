@@ -17,8 +17,8 @@ from pathlib import Path
 import pandas as pd
 
 from src import config
-from src.benchmark_processing import OPERATIONS, SUMMARY_FILE, end_to_end
-from src.plots_processing import crossover_rows, memory_per_row_kb
+from src.benchmark_processing import OPERATIONS, RAW_FILE, SUMMARY_FILE, end_to_end
+from src.plots_processing import crossover_rows, main_curves, memory_per_row_kb
 
 logger = logging.getLogger(__name__)
 
@@ -42,15 +42,24 @@ FIGURES = {
            ("17_s3_zone_concentration.png", "İlçe yoğunlaşması")],
     "s4": [("18_s4_scalability.png", "Eğitim süresi ve bellek"),
            ("19_s4_model_comparison.png", "RMSE ve R²"),
-           ("20_s4_feature_actual_pred.png", "Özellik önemi, gerçek vs tahmin")],
+           ("20_s4_feature_actual_pred.png", "Özellik önemi, gerçek vs tahmin"),
+           ("24_s4_ablation_tuning.png", "Özellik sızıntısı ve hiperparametre araması"),
+           ("25_s4_error_analysis.png", "Hata analizi: mesafe, saat, ilçe")],
     "s5": [("21_s5_op_time.png", "İşlem süresi"), ("22_s5_end_to_end.png", "Uçtan uca süre"),
-           ("23_s5_memory.png", "Tepe bellek")],
+           ("23_s5_memory.png", "Tepe bellek"),
+           ("26_s5_time_breakdown.png", "Süre dökümü: açılış, yükleme, işlemler")],
 }
 
 
 def _read(name: str) -> pd.DataFrame | None:
     path = config.RESULTS_DIR / name
     return pd.read_csv(path) if path.exists() else None
+
+
+def _s5_summary() -> pd.DataFrame | None:
+    """S5 özeti, dosya düzeni kontrolü hariç (boyut eğrileri için)."""
+    s5 = _read(SUMMARY_FILE)
+    return None if s5 is None else main_curves(s5)
 
 
 def _fmt_int(x) -> str:
@@ -70,16 +79,58 @@ def collect_kpis() -> list[tuple[str, str, str]]:
         kpis.append(("Ham kayıt", _fmt_int(full), "TLC Yellow Taxi 2026 Ocak–Mayıs"))
     kpis.append(("Temiz kayıt", _fmt_int(config.CLEAN_ROWS), "10 kuraldan sonra (S2)"))
     if manifest is not None:
-        kpis.append(("Veri boyutu", f"{manifest['size'].nunique()}",
-                     "100K · 1M · 5M · 10M · 19M (S1)"))
-    s5 = _read(SUMMARY_FILE)
+        kpis.append(("Veri boyutu", f"{manifest['size'].nunique()} + 1",
+                     "100K · 1M · 5M · 10M · 19M (S1) + 57M sentetik (S5)"))
+    s5 = _s5_summary()
     if s5 is not None:
         e2e = end_to_end(s5)
         for fmt, label in (("csv", "CSV"), ("parquet_snappy", "Parquet")):
             x = crossover_rows(e2e, fmt)
             value = "öne geçmiyor" if x is None else f"≈ {_fmt(x / 1e6)}M kayıt"
-            kpis.append((f"Spark > pandas ({label})", value, "uçtan uca süre, S5"))
+            kpis.append((f"Spark > pandas ({label})", value, "uçtan uca süre, 57M'e kadar (S5)"))
+        stats = startup_stats("spark")
+        if stats:
+            kpis.append(("Spark oturum açılışı", f"{_fmt(stats['mean'], 2)} ± {_fmt(stats['std'], 2)} sn",
+                         f"{stats['n']} bağımsız süreç (S5)"))
+    s4 = _read("s4_comparison.csv")
+    if s4 is not None and s4["error"].isna().any():
+        best = s4[s4["error"].isna()].sort_values("rmse").iloc[0]
+        kpis.append(("En iyi model (ana karşılaştırma)", f"RMSE {_fmt(best['rmse'], 2)} dk",
+                     f"{best['framework']} {best['model']}, {best['size_label']} (S4)"))
     return kpis
+
+
+def startup_stats(engine: str = "spark") -> dict | None:
+    """Spark oturum açılışı: her alt süreçte bir soğuk açılış → süreçler arası ortalama ± std.
+
+    Motor bazında ayrı: aynı kod, ama ``spark`` ve ``spark_cache`` farklı oturumlarda ölçüldü.
+    """
+    raw = _read(RAW_FILE)
+    if raw is None:
+        return None
+    st = raw[(raw["op"] == "startup") & (raw["status"] == "ok") & (raw["engine"] == engine)]["seconds"]
+    if len(st) < 2:
+        return None
+    return {"n": int(len(st)), "mean": float(st.mean()), "std": float(st.std(ddof=1)),
+            "min": float(st.min()), "max": float(st.max())}
+
+
+def s5_layout_table() -> str:
+    """Dosya düzeni kontrolü: 19M Parquet, 3 vs 23 row group (aynı satırlar, aynı codec)."""
+    s5 = _read(SUMMARY_FILE)
+    if s5 is None or "full_rg16" not in set(s5["size"]):
+        return ""
+    sel = s5[s5["size"].isin(["full", "full_rg16"]) & (s5["format"] == "parquet_snappy")]
+    piv = sel.pivot_table(index=["engine", "op"], columns="size", values="seconds_mean").reset_index()
+    piv = piv[piv["op"].isin(["load", *OPERATIONS])].dropna()
+    piv["motor"] = piv["engine"].map({"pandas": "pandas", "spark": "Spark", "spark_cache": "Spark + cache"})
+    piv["oran"] = (piv["full"] / piv["full_rg16"]).map(lambda v: _fmt(v, 2) + "×")
+    for c in ("full", "full_rg16"):
+        piv[c] = piv[c].map(lambda v: _fmt(v, 2))
+    return ("<h3>Dosya düzeni kontrolü (19M Parquet: 3 vs 23 row group)</h3>"
+            + table_html(piv, {"motor": "Motor", "op": "Adım", "full": "3 row group (sn)",
+                               "full_rg16": "23 row group (sn)", "oran": "Hızlanma"},
+                         {"full", "full_rg16", "oran"}))
 
 
 def table_html(df: pd.DataFrame, columns: dict[str, str], numeric: set[str] = frozenset()) -> str:
@@ -125,8 +176,36 @@ def s4_table() -> str:
                       {"rmse", "r2", "train_time_s", "peak_rss_mb"})
 
 
+def s4_extra_tables() -> str:
+    """Özellik sızıntısı ablasyonu + hiperparametre aramasının test sonucu (S4 ekleri)."""
+    out = []
+    ab = _read("s4_ablation.csv")
+    if ab is not None:
+        ab = ab.copy()
+        for c, d in (("rmse", 3), ("mae", 3), ("r2", 3)):
+            ab[c] = ab[c].map(lambda v, d=d: _fmt(v, d))
+        out.append("<h3>Özellik sızıntısı (5M, HistGradientBoosting)</h3>" + table_html(
+            ab, {"label": "Özellik seti", "rmse": "RMSE (dk)", "mae": "MAE (dk)", "r2": "R²"},
+            {"rmse", "mae", "r2"}))
+    tu = _read("s4_tuning.csv")
+    if tu is not None:
+        tu = tu[tu["stage"] != "validation"].copy()
+        tu["ayar"] = [f"{int(r.max_iter)} ağaç · derinlik "
+                      f"{'sınırsız (63 yaprak)' if pd.isna(r.max_depth) else int(r.max_depth)}"
+                      f" · lr {_fmt(r.learning_rate, 2)}" for r in tu.itertuples()]
+        tu["stage"] = tu["stage"].map({"test_default": "Ana deneydeki ayar",
+                                       "test_tuned": "Arama ile seçilen ayar"})
+        for c, d in (("rmse", 3), ("r2", 3), ("train_time_s", 1)):
+            tu[c] = tu[c].map(lambda v, d=d: _fmt(v, d))
+        out.append("<h3>Hiperparametre araması (1M doğrulama → 5M test, biniş anı özellikleri)</h3>"
+                   + table_html(tu, {"stage": "Model", "ayar": "Ayar", "rmse": "Test RMSE (dk)",
+                                     "r2": "R²", "train_time_s": "Eğitim (sn)"},
+                                {"rmse", "r2", "train_time_s"}))
+    return "".join(out)
+
+
 def s5_records() -> list[dict]:
-    s5 = _read(SUMMARY_FILE)
+    s5 = _s5_summary()
     if s5 is None:
         return []
     recs = []
@@ -142,12 +221,19 @@ def s5_records() -> list[dict]:
 
 
 def s5_notes() -> str:
-    s5 = _read(SUMMARY_FILE)
+    s5 = _s5_summary()
     if s5 is None:
         return ""
     slopes = memory_per_row_kb(s5)
     parts = [f"{'CSV' if k == 'csv' else 'Parquet'}: {_fmt(v, 2)} KB/kayıt" for k, v in slopes.items()]
-    return "pandas tepe belleğinin kayıt başına eğimi — " + " · ".join(parts)
+    note = "pandas tepe belleğinin kayıt başına eğimi — " + " · ".join(parts)
+    for engine, label in (("spark", "Spark"), ("spark_cache", "Spark + cache")):
+        stats = startup_stats(engine)
+        if stats:
+            note += (f". {label} oturum açılışı {stats['n']} bağımsız süreçte {_fmt(stats['mean'], 2)} ± "
+                     f"{_fmt(stats['std'], 2)} sn")
+    return note + (". Açılış kodu iki motorda aynı; fark ölçüm oturumundan (makine durumu) geliyor."
+                   if startup_stats("spark_cache") else "")
 
 
 def figure_gallery(key: str) -> str:
@@ -172,7 +258,9 @@ def build_html() -> str:
             .replace("__KPIS__", kpis)
             .replace("__S1_TABLE__", s1_table())
             .replace("__S4_TABLE__", s4_table())
+            .replace("__S4_EXTRA__", s4_extra_tables())
             .replace("__S5_NOTES__", html.escape(s5_notes()))
+            .replace("__S5_LAYOUT__", s5_layout_table())
             .replace("__G_S1__", figure_gallery("s1"))
             .replace("__G_S2__", figure_gallery("s2"))
             .replace("__G_S3__", figure_gallery("s3"))
@@ -199,14 +287,14 @@ TEMPLATE = r"""<!doctype html>
   color-scheme: light;
   --surface: #fcfcfb; --panel: #ffffff; --border: #e4e3df;
   --text-primary: #0b0b0b; --text-secondary: #52514e; --text-muted: #77766f;
-  --grid: #eceae5; --pandas: #eb6834; --spark: #2a78d6;
+  --grid: #eceae5; --pandas: #eb6834; --spark: #2a78d6; --cache: #1baf7a;
 }
 @media (prefers-color-scheme: dark) {
   :root {
     color-scheme: dark;
     --surface: #1a1a19; --panel: #222220; --border: #3a3936;
     --text-primary: #f0efec; --text-secondary: #c3c2b7; --text-muted: #9a998f;
-    --grid: #33322f; --pandas: #d95926; --spark: #3987e5;
+    --grid: #33322f; --pandas: #d95926; --spark: #3987e5; --cache: #00a888;
   }
 }
 * { box-sizing: border-box; }
@@ -215,6 +303,7 @@ body { margin: 0; background: var(--surface); color: var(--text-primary);
 header, main { max-width: 1180px; margin: 0 auto; padding: 0 20px; }
 header { padding-top: 28px; }
 h1 { font-size: 26px; margin: 0 0 4px; }
+h3 { font-size: 15px; margin: 18px 0 4px; color: var(--text-secondary); }
 h2 { font-size: 19px; margin: 36px 0 8px; border-top: 1px solid var(--border); padding-top: 24px; }
 p.lead { color: var(--text-secondary); margin: 0 0 16px; max-width: 820px; }
 nav { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 12px 0 4px; }
@@ -266,8 +355,9 @@ footer { max-width: 1180px; margin: 40px auto; padding: 0 20px; color: var(--tex
 <section id="s5">
   <h2>Öğrenci 5 — pandas vs Spark işleme performansı</h2>
   <p class="lead">Her nokta 3 tekrarın ortalaması (1 ısınma atıldı). pandas işlemleri bellekteki tabloda
-  çalışır; Spark tembel olduğu için her işlem dosyadan okuyarak çalışır. "Uçtan uca" = pandas yükleme veya
-  Spark oturum açılışı + üç işlemin toplamı.</p>
+  çalışır; Spark tembel olduğu için her işlem dosyadan okuyarak çalışır; <em>Spark + cache</em> veriyi bir kez
+  önbelleğe alır ve işlemleri oradan çalıştırır. "Uçtan uca" = hazırlık (pandas yükleme · Spark oturum açılışı ·
+  Spark + cache açılış + önbelleğe yükleme) + üç işlemin toplamı. 19M'den büyük nokta sentetiktir (19M verinin 3 kopyası).</p>
   <div class="controls">
     <label>İşlem <select id="op">
       <option value="end_to_end">Uçtan uca (hazırlık + 3 işlem)</option>
@@ -290,6 +380,7 @@ footer { max-width: 1180px; margin: 40px auto; padding: 0 20px; color: var(--tex
   <p class="note">__S5_NOTES__</p>
   <p class="note">Not: tepe bellek, işlemlerin aynı süreçte sırayla (groupby → join → window) çalıştığı ölçümdendir; JVM belleği küçülmediği için işlem başına değer bir üst sınırdır.</p>
   <details><summary>Tablo görünümü</summary><div id="table"></div></details>
+  __S5_LAYOUT__
   __G_S5__
 </section>
 <section id="s1">
@@ -309,9 +400,10 @@ footer { max-width: 1180px; margin: 40px auto; padding: 0 20px; color: var(--tex
 </section>
 <section id="s4">
   <h2>Öğrenci 4 — Yolculuk süresi tahmini: PySpark MLlib vs scikit-learn</h2>
-  <p class="lead">Aynı örneklem, aynı train/test ayrımı, aynı özellikler ve hiperparametreler. Bellek: süreç ağacının
-  tepe RSS'i (Spark'ta JVM dahil).</p>
+  <p class="lead">Aynı örneklem, aynı train/test ayrımı, aynı özellikler ve hiperparametreler; 100K–5M örneklem ve verinin
+  tamamı (17M). Spark verisi eğitimden önce 20 bölüme dağıtıldı. Bellek: süreç ağacının tepe RSS'i (Spark'ta JVM dahil).</p>
   __S4_TABLE__
+  __S4_EXTRA__
   __G_S4__
 </section>
 </main>
@@ -325,7 +417,10 @@ footer { max-width: 1180px; margin: 40px auto; padding: 0 20px; color: var(--tex
     {engine: 'pandas', format: 'parquet_snappy', label: 'pandas + Parquet', color: 'var(--pandas)', dash: '', shape: 'square'},
     {engine: 'spark', format: 'csv', label: 'Spark + CSV', color: 'var(--spark)', dash: '6 4', shape: 'circle'},
     {engine: 'spark', format: 'parquet_snappy', label: 'Spark + Parquet', color: 'var(--spark)', dash: '', shape: 'square'},
+    {engine: 'spark_cache', format: 'csv', label: 'Spark + cache + CSV', color: 'var(--cache)', dash: '6 4', shape: 'circle'},
+    {engine: 'spark_cache', format: 'parquet_snappy', label: 'Spark + cache + Parquet', color: 'var(--cache)', dash: '', shape: 'square'},
   ];
+  const SYNTHETIC_MIN_ROWS = 2e7;  // 19M üstü = sentetik ×3
   const METRIC = {
     seconds: {label: 'Süre (sn, log)', log: true, fmt: v => v.toLocaleString('tr-TR', {maximumFractionDigits: 2}) + ' sn'},
     peak: {label: 'Tepe bellek (MB)', log: false, fmt: v => Math.round(v).toLocaleString('tr-TR') + ' MB'},
@@ -377,7 +472,8 @@ footer { max-width: 1180px; margin: 40px auto; padding: 0 20px; color: var(--tex
           : el('rect', {x: cx - 4.5, y: cy - 4.5, width: 9, height: 9, rx: 1, fill: s.color, stroke: 'var(--panel)', 'stroke-width': 2});
         const hit = el('circle', {cx, cy, r: 12, fill: 'transparent', tabindex: 0});
         const show = () => {
-          tip.innerHTML = `<strong>${s.label}</strong><br>${fmtRows(p.rows)} kayıt · ${m.fmt(p[metric])}`;
+          const syn = p.rows > SYNTHETIC_MIN_ROWS ? ' (sentetik ×3)' : '';
+          tip.innerHTML = `<strong>${s.label}</strong><br>${fmtRows(p.rows)} kayıt${syn} · ${m.fmt(p[metric])}`;
           tip.style.display = 'block';
           const box = svg.getBoundingClientRect(), k = box.width / W;
           tip.style.left = (cx * k + 14) + 'px'; tip.style.top = (cy * k - 10) + 'px';

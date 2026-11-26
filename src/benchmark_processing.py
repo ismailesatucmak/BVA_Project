@@ -20,12 +20,16 @@
     Spark: tembel değerlendirme → her işlem dosyadan okuyarak çalışır; sonuç küçük olduğu
     için ``collect()`` ile tetiklenir (``count()`` kısayolu yok). Oturum açılışı (``startup``)
     ayrı ölçülür, işlem süresine dahil değildir.
+    Spark cache (``spark_cache``): pandas'ın "bir kez yükle" modelinin Spark karşılığı.
+    Veri bir kez okunup ``cache()`` + ``count()`` ile Spark belleğine alınır (``load``),
+    işlemler önbellekteki tabloda çalışır. Hazırlık = oturum açılışı + yükleme.
   * Bellek: süreç ağacının (Python + JVM) tepe RSS'i, ``src.mem_probe.PeakRSS``.
   * Doğruluk: her işlemin sonucu satır sayısı + sağlama toplamıyla (checksum) kaydedilir;
     iki motor ve iki format aynı sonucu vermek zorundadır (``check_consistency``).
 
-Çalıştırma:  python -m src.benchmark_processing [--sizes 100k 1m] [--engines pandas spark]
+Çalıştırma:  python -m src.benchmark_processing [--sizes 100k 1m] [--engines pandas spark spark_cache]
              [--formats csv parquet_snappy] [--force]
+             python -m src.benchmark_processing --sizes x3   # sentetik 57M (önce src.scale_synthetic)
 """
 from __future__ import annotations
 
@@ -47,10 +51,11 @@ from src.build_sizes import SIZES, target_path
 
 logger = logging.getLogger(__name__)
 
-ENGINES = ("pandas", "spark")
+ENGINES = ("pandas", "spark", "spark_cache")
 FORMATS = ("csv", "parquet_snappy")
 OPERATIONS = ("groupby_hour", "join_borough", "window_top3")
-SETUP_STEP = {"pandas": "load", "spark": "startup"}  # uçtan uca süreye eklenen hazırlık adımı
+# uçtan uca süreye eklenen hazırlık adımları
+SETUP_STEPS = {"pandas": ("load",), "spark": ("startup",), "spark_cache": ("startup", "load")}
 COLUMNS = ("tpep_pickup_datetime", "PULocationID", "payment_type",
            "trip_distance", "fare_amount", "total_amount")
 TOP_N = 3
@@ -62,6 +67,12 @@ SUMMARY_FILE = "s5_processing.csv"
 PANDAS_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 SPARK_TIMESTAMP_FORMAT = "yyyy-MM-dd HH:mm:ss"
 KEY = ["engine", "size", "format", "op"]
+# Sentetik boyutlar (src.scale_synthetic, 19M × k); varsayılan çalıştırmaya girmez: --sizes x3
+SYNTHETIC_SIZES = ("x3",)
+# Dosya düzeni kontrolü: 19M Parquet, 16 MB row group (src.scale_synthetic --layout). Satır sayısı
+# 19M ile aynı → ana eğrilere girmez, ayrı tabloda raporlanır.
+LAYOUT_SIZES = ("full_rg16",)
+ALL_SIZES = (*SIZES, *SYNTHETIC_SIZES, *LAYOUT_SIZES)
 CHECKSUM_RTOL = 1e-6
 
 
@@ -226,7 +237,7 @@ def run_pandas_worker(size: str, fmt: str) -> list[dict]:
     return records
 
 
-def run_spark_worker(size: str, fmt: str) -> list[dict]:
+def _spark_start(size: str, fmt: str):
     from src.mem_probe import PeakRSS
     from src.spark_session import get_spark
 
@@ -235,12 +246,21 @@ def run_spark_worker(size: str, fmt: str) -> list[dict]:
         spark = get_spark(f"s5-{size}-{fmt}")
         spark.range(1).count()
         startup = time.perf_counter() - started
-    records = [_record("startup", 1, startup, probe.peak_total_mb, probe.start_total_mb)]
+    return spark, _record("startup", 1, startup, probe.peak_total_mb, probe.start_total_mb)
+
+
+def _spark_inputs(spark, size: str, fmt: str):
+    schema = spark.read.parquet(str(target_path(config.PROCESSED_DIR, size, "parquet_snappy"))).schema
+    zones = spark_zones(spark).cache()
+    zones.count()
+    return schema, target_path(config.PROCESSED_DIR, size, fmt), zones
+
+
+def run_spark_worker(size: str, fmt: str) -> list[dict]:
+    spark, startup = _spark_start(size, fmt)
+    records = [startup]
     try:
-        schema = spark.read.parquet(str(target_path(config.PROCESSED_DIR, size, "parquet_snappy"))).schema
-        path = target_path(config.PROCESSED_DIR, size, fmt)
-        zones = spark_zones(spark).cache()
-        zones.count()
+        schema, path, zones = _spark_inputs(spark, size, fmt)
         rows = spark_frame(spark, path, fmt, schema).count()  # doğrulama, süreye dahil değil
         for op, (fn, value_col) in spark_ops(zones).items():
             def run():
@@ -254,8 +274,49 @@ def run_spark_worker(size: str, fmt: str) -> list[dict]:
     return records
 
 
+def run_spark_cache_worker(size: str, fmt: str) -> list[dict]:
+    """Veri bir kez Spark önbelleğine alınır (load), işlemler önbellekten çalışır.
+
+    Önbelleğe almadan önce veri çekirdek sayısı kadar bölüme dağıtılır (``spread_partitions``):
+    tek dosya Parquet 1–4 row group içerir ve dağıtılmazsa önbellek 1–4 bölümde kalır, tüm
+    işlemler 1–4 çekirdekte çalışır. Dağıtımın (shuffle) maliyeti ``load`` süresine dahildir.
+    """
+    from src.spark_session import spread_partitions
+
+    spark, startup = _spark_start(size, fmt)
+    records = [startup]
+    try:
+        schema, path, zones = _spark_inputs(spark, size, fmt)
+        holder: dict = {}
+
+        def load():
+            old = holder.pop("df", None)
+            if old is not None:
+                old.unpersist(blocking=True)  # her tekrar soğuk önbellekle başlasın
+            df = spread_partitions(spark_frame(spark, path, fmt, schema)).cache()
+            holder["rows"] = df.count()  # önbelleği doldurur
+            holder["df"] = df
+            return None
+
+        for rep, sec, peak, start, _ in _timed(load):
+            records.append(_record("load", rep, sec, peak, start, rows=holder["rows"]))
+
+        df, rows = holder["df"], holder["rows"]
+        for op, (fn, value_col) in spark_ops(zones).items():
+            for rep, sec, peak, start, result in _timed(lambda: fn(df).toPandas()):
+                n, s = checksum(result, value_col)
+                records.append(_record(op, rep, sec, peak, start, rows=rows, result_rows=n, check=s))
+    finally:
+        spark.stop()
+    return records
+
+
+WORKERS = {"pandas": run_pandas_worker, "spark": run_spark_worker,
+           "spark_cache": run_spark_cache_worker}
+
+
 def worker_main(args: argparse.Namespace) -> int:
-    fn = run_pandas_worker if args.worker == "pandas" else run_spark_worker
+    fn = WORKERS[args.worker]
     for rec in fn(args.size, args.format):
         print(RESULT_PREFIX + json.dumps(rec), flush=True)
     return 0
@@ -324,7 +385,7 @@ def end_to_end(summary: pd.DataFrame) -> pd.DataFrame:
         by_op = grp.set_index("op")["seconds_mean"]
         if not set(OPERATIONS) <= set(by_op.index):
             continue
-        setup = float(by_op.get(SETUP_STEP[engine], 0.0))
+        setup = float(sum(by_op.get(step, 0.0) for step in SETUP_STEPS[engine]))
         ops = float(by_op[list(OPERATIONS)].sum())
         rows.append({"engine": engine, "size": size, "format": fmt,
                      "rows": int(grp["rows"].dropna().iloc[0]),
@@ -386,12 +447,12 @@ def orchestrate(sizes, engines, formats, force: bool = False) -> pd.DataFrame:
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--sizes", nargs="+", choices=list(SIZES), default=list(SIZES))
+    parser.add_argument("--sizes", nargs="+", choices=ALL_SIZES, default=list(SIZES))
     parser.add_argument("--engines", nargs="+", choices=ENGINES, default=list(ENGINES))
     parser.add_argument("--formats", nargs="+", choices=FORMATS, default=list(FORMATS))
     parser.add_argument("--force", action="store_true", help="tamamlanmış kombinasyonları da yeniden ölç")
     parser.add_argument("--worker", choices=ENGINES, help=argparse.SUPPRESS)
-    parser.add_argument("--size", choices=list(SIZES), help=argparse.SUPPRESS)
+    parser.add_argument("--size", choices=ALL_SIZES, help=argparse.SUPPRESS)
     parser.add_argument("--format", choices=FORMATS, help=argparse.SUPPRESS)
     return parser.parse_args(argv)
 

@@ -1,8 +1,9 @@
 """NYC Taxi yolculuk süresi tahmini — PySpark MLlib vs scikit-learn (Öğrenci 4).
 
 Deney tasarımı (adil karşılaştırma):
-  * Örneklem: temiz veriden 100K / 1M / 5M kayıt, S1'in xxhash64 anahtarıyla
-    (``build_sizes.with_sample_key``) → makineden bağımsız ve iç içe (100K ⊂ 1M ⊂ 5M).
+  * Örneklem: temiz veriden 100K / 1M / 5M kayıt + temiz verinin tamamı (17M), S1'in
+    xxhash64 anahtarıyla (``build_sizes.with_sample_key``) → makineden bağımsız ve iç içe
+    (100K ⊂ 1M ⊂ 5M ⊂ 17M).
   * Train/test ayrımı da satır hash'iyle yapılır (%80 / %20) ve örneklemle birlikte
     diske yazılır → PySpark ve scikit-learn **aynı satırlarda** eğitilir ve test edilir.
   * Özellikler iki tarafta aynıdır: 8 sayısal kolon + biniş/iniş bölgesi.
@@ -24,8 +25,8 @@ Kural: Flex Fare kayıtlarında null olan kolonlar (passenger_count, RatecodeID 
 Kural: fare_amount, total_amount, tip_amount, tpep_dropoff_datetime data leakage nedeniyle dışlanır.
 
 Çalıştırma:
-    python -m src.ml_duration                 # örneklemler + 12 ölçüm + grafikler
-    python -m src.ml_duration --sizes 100K 1M # yalnızca seçilen boyutlar
+    python -m src.ml_duration                 # örneklemler + 16 ölçüm + grafikler
+    python -m src.ml_duration --sizes 17M     # yalnızca seçilen boyutlar (tablo birleştirilir)
     python -m src.ml_duration --plots-only    # kayıtlı CSV'lerden grafikler (Spark gerekmez)
 """
 
@@ -40,15 +41,16 @@ import sys
 import time
 from pathlib import Path
 
-from src.config import CLEAN_DIR, EXTERNAL_DATA_ROOT, FIGURES_DIR, RESULTS_DIR
+from src.config import CLEAN_DIR, CLEAN_ROWS, EXTERNAL_DATA_ROOT, FIGURES_DIR, RESULTS_DIR
 
 log = logging.getLogger(__name__)
 
 # ------------------------------------------------------------------
 # Sabitler
 # ------------------------------------------------------------------
-SAMPLE_SIZES = [100_000, 1_000_000, 5_000_000]
-SAMPLE_LABELS = ["100K", "1M", "5M"]
+# "17M" = temiz verinin tamamı (örnekleme yok; _sample_data n >= toplam ise tüm veriyi döndürür)
+SAMPLE_SIZES = [100_000, 1_000_000, 5_000_000, CLEAN_ROWS]
+SAMPLE_LABELS = ["100K", "1M", "5M", "17M"]
 SAMPLE_SEED = 42
 TARGET_COL = "trip_duration_min"
 TRAIN_RATIO = 0.8
@@ -336,11 +338,13 @@ def run_spark_worker(sample_dir: Path, size_label: str, model_type: str) -> dict
     from pyspark.sql import functions as F
 
     from src.mem_probe import PeakRSS
-    from src.spark_session import get_spark
+    from src.spark_session import get_spark, spread_partitions
 
     spark = get_spark(app_name=f"s4-{model_type}-{size_label}")
     try:
-        df = with_nominal_metadata(spark.read.parquet(str(sample_dir)))
+        # Örneklem tek dosya, 1–2 row group → okununca 1–2 bölüm. Dağıtmadan eğitilirse Spark
+        # 20 çekirdeğin 1–2'sini kullanır. Dağıtım veri yüklemenin parçası, süreye dahil değil.
+        df = with_nominal_metadata(spread_partitions(spark.read.parquet(str(sample_dir))))
         train = df.filter(F.col(SPLIT_COL)).drop(SPLIT_COL).cache()
         test = df.filter(~F.col(SPLIT_COL)).drop(SPLIT_COL).cache()
         n_train, n_test = train.count(), test.count()  # veri yükleme ölçüme dahil değil
@@ -445,16 +449,38 @@ def _run_worker_subprocess(framework: str, model_type: str, size_label: str,
 # Orkestrasyon
 # ------------------------------------------------------------------
 
+def merge_results(existing: list[dict], new: list[dict]) -> list[dict]:
+    """Yeni ölçümler aynı (çerçeve, model, boyut) satırının yerine geçer; diğerleri korunur.
+
+    Sıra: boyut (SAMPLE_LABELS sırası), sonra EXPERIMENTS sırası.
+    """
+    def key(r):
+        return (r["framework"], r["model"], r["size_label"])
+
+    merged = {key(r): r for r in existing}
+    merged.update({key(r): r for r in new})
+    size_rank = {lbl: i for i, lbl in enumerate(SAMPLE_LABELS)}
+    exp_rank = {(fw, name): i for i, (fw, _, name) in enumerate(EXPERIMENTS)}
+    return sorted(merged.values(), key=lambda r: (size_rank.get(r["size_label"], 99),
+                                                  exp_rank.get((r["framework"], r["model"]), 99)))
+
+
 def save_results(rows: list[dict]) -> None:
+    """Yeni satırları mevcut tabloyla birleştirip yazar (yalnızca --sizes ile seçilenler değişir)."""
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    existing = []
+    if COMPARISON_CSV.exists():
+        with open(COMPARISON_CSV, newline="", encoding="utf-8") as f:
+            existing = list(csv.DictReader(f))
     with open(COMPARISON_CSV, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=RESULT_FIELDS)
         writer.writeheader()
-        writer.writerows(rows)
+        writer.writerows(merge_results(existing, rows))
     log.info("Karşılaştırma tablosu: %s", COMPARISON_CSV)
 
 
-def run_all(size_labels: list[str], force_samples: bool = False) -> list[dict]:
+def run_all(size_labels: list[str], force_samples: bool = False,
+            frameworks: tuple[str, ...] = ("PySpark", "scikit-learn")) -> list[dict]:
     from src.spark_session import get_spark
 
     sizes = [(lbl, n) for lbl, n in zip(SAMPLE_LABELS, SAMPLE_SIZES) if lbl in size_labels]
@@ -476,6 +502,8 @@ def run_all(size_labels: list[str], force_samples: bool = False) -> list[dict]:
     tmp_dir.mkdir(parents=True, exist_ok=True)
     for lbl, _ in sizes:
         for framework, model_type, name in EXPERIMENTS:
+            if framework not in frameworks:
+                continue
             log.info("Ölçüm: %s / %s / %s", framework, name, lbl)
             out_json = tmp_dir / f"{framework}_{model_type}_{lbl}.json"
             row = _run_worker_subprocess(framework, model_type, lbl, sample_dirs[lbl], out_json)
@@ -594,6 +622,9 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--sizes", nargs="+", default=SAMPLE_LABELS, choices=SAMPLE_LABELS)
     parser.add_argument("--plots-only", action="store_true",
                         help="kayıtlı CSV'lerden yalnızca grafikleri üret")
+    parser.add_argument("--frameworks", nargs="+", default=["PySpark", "scikit-learn"],
+                        choices=["PySpark", "scikit-learn"],
+                        help="yalnızca seçilen çerçeveleri ölç (tablo birleştirilir)")
     parser.add_argument("--force-samples", action="store_true",
                         help="örneklemleri yeniden üret")
     # iç kullanım: tek ölçüm işçisi
@@ -612,7 +643,8 @@ def main(argv: list[str] | None = None) -> None:
         Path(args.out).write_text(json.dumps(row), encoding="utf-8")
         return
     if not args.plots_only:
-        save_results(run_all(args.sizes, force_samples=args.force_samples))
+        save_results(run_all(args.sizes, force_samples=args.force_samples,
+                             frameworks=tuple(args.frameworks)))
     make_plots(*load_saved())
 
 

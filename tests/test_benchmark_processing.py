@@ -108,6 +108,21 @@ class TestChecksumAndSummary:
         assert e2e.loc["spark", "rows"] == 1000
 
 
+def test_spark_cache_setup_is_startup_plus_load():
+    recs = []
+    for op, sec in (("startup", 4.0), ("load", 2.0), *[(o, 0.5) for o in bp.OPERATIONS]):
+        recs.append({"engine": "spark_cache", "size": "1m", "format": "parquet_snappy", "op": op,
+                     "rep": 1, "status": "ok", "seconds": sec, "peak_rss_mb": 100.0,
+                     "rss_before_mb": 50.0, "rows": 1000, "result_rows": 1, "checksum": 1.0})
+    e2e = bp.end_to_end(bp.summarize(pd.DataFrame(recs))).iloc[0]
+    assert e2e["setup_s"] == pytest.approx(6.0)
+    assert e2e["total_s"] == pytest.approx(6.0 + 1.5)
+
+
+def test_every_engine_has_worker_and_setup():
+    assert set(bp.ENGINES) == set(bp.WORKERS) == set(bp.SETUP_STEPS)
+
+
 def test_parse_worker_output_ignores_noise():
     out = "log line\n" + bp.RESULT_PREFIX + '{"op": "load", "seconds": 1.5}\nWARN x\n'
     assert bp.parse_worker_output(out) == [{"op": "load", "seconds": 1.5}]

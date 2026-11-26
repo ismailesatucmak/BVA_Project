@@ -1,0 +1,4 @@
+feature_set,label,size_label,n_features,rmse,mae,r2,train_time_s
+tam,Tam (8 sayısal + bölgeler),5M,10,5.5614,3.6037,0.7881,4.63
+binis_ani,Biniş anı (ücret kalemleri yok),5M,5,5.5361,3.5712,0.79,4.53
+bolge_zaman,Yalnız bölge + zaman (mesafe yok),5M,4,6.9125,4.912,0.6726,4.2
